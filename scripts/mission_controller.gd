@@ -10,6 +10,7 @@ const PHASE_TITLES := [
 	"Launch for Earth",
 	"You are home",
 ]
+const SPACE_SHUTTLE_MODEL_PATH := "res://assets/vehicles/space_shuttle.glb"
 const PHASE_DETAILS := [
 	"Reach the damaged ship. Follow the blue marker.",
 	"Find every glowing part and press E to pick it up.",
@@ -172,6 +173,9 @@ func _build_return_ship() -> void:
 	hull_shape.position.y = 2.75
 	hull_body.add_child(hull_shape)
 	ship_root.add_child(hull_body)
+	var procedural_hull := Node3D.new()
+	procedural_hull.name = "Procedural return ship fallback"
+	ship_root.add_child(procedural_hull)
 	var shell := _material(Color(0.75, 0.73, 0.66), 0.72)
 	var pale := _material(Color(0.88, 0.87, 0.79), 0.65)
 	var gold := _material(Color(0.83, 0.55, 0.25), 0.58)
@@ -181,29 +185,81 @@ func _build_return_ship() -> void:
 	var alert := _emissive(Color(1.0, 0.28, 0.14))
 	var quiet := _emissive(Color(0.16, 0.82, 0.78))
 
-	_add_cylinder("Return ship lower deck", ship_position + Vector3(0.0, 1.8, 0.0), 2.25, 1.0, gold, 8, ship_root)
-	_add_cylinder("Heat shield", ship_position + Vector3(0.0, 1.22, 0.0), 1.8, 0.28, dark, 10, ship_root)
-	_add_cylinder("Cabin pressure shell", ship_position + Vector3(0.0, 3.05, 0.0), 1.45, 1.55, shell, 8, ship_root)
-	_add_cylinder("Cabin roof", ship_position + Vector3(0.0, 3.94, 0.0), 1.05, 0.26, pale, 8, ship_root)
-	_add_box("Forward cockpit glass", ship_position + Vector3(0.0, 3.25, -1.06), Vector3(1.25, 0.52, 0.12), glass, ship_root)
-	_add_box("Cabin access hatch", ship_position + Vector3(0.0, 2.25, -1.45), Vector3(0.62, 0.94, 0.12), dark, ship_root)
-	_add_box("Hull side panel", ship_position + Vector3(-1.45, 2.2, 0.0), Vector3(0.16, 0.65, 1.2), pale, ship_root)
-	_add_box("Damaged hull plate", ship_position + Vector3(1.45, 2.15, 0.15), Vector3(0.12, 0.48, 1.0), gold, ship_root)
-	_add_cylinder("Main engine mount", ship_position + Vector3(0.0, 0.72, 0.0), 0.86, 0.6, dark, 10, ship_root)
+	_add_cylinder("Return ship lower deck", ship_position + Vector3(0.0, 1.8, 0.0), 2.25, 1.0, gold, 8, procedural_hull)
+	_add_cylinder("Heat shield", ship_position + Vector3(0.0, 1.22, 0.0), 1.8, 0.28, dark, 10, procedural_hull)
+	_add_cylinder("Cabin pressure shell", ship_position + Vector3(0.0, 3.05, 0.0), 1.45, 1.55, shell, 8, procedural_hull)
+	_add_cylinder("Cabin roof", ship_position + Vector3(0.0, 3.94, 0.0), 1.05, 0.26, pale, 8, procedural_hull)
+	_add_box("Forward cockpit glass", ship_position + Vector3(0.0, 3.25, -1.06), Vector3(1.25, 0.52, 0.12), glass, procedural_hull)
+	_add_box("Cabin access hatch", ship_position + Vector3(0.0, 2.25, -1.45), Vector3(0.62, 0.94, 0.12), dark, procedural_hull)
+	_add_box("Hull side panel", ship_position + Vector3(-1.45, 2.2, 0.0), Vector3(0.16, 0.65, 1.2), pale, procedural_hull)
+	_add_box("Damaged hull plate", ship_position + Vector3(1.45, 2.15, 0.15), Vector3(0.12, 0.48, 1.0), gold, procedural_hull)
+	_add_cylinder("Main engine mount", ship_position + Vector3(0.0, 0.72, 0.0), 0.86, 0.6, dark, 10, procedural_hull)
 	for side in [-1.0, 1.0]:
-		_add_cylinder("Landing engine", ship_position + Vector3(side * 0.68, 0.58, 0.0), 0.34, 0.42, dark, 8, ship_root)
-		_add_box("Solar wing", ship_position + Vector3(side * 4.25, 2.4, 0.0), Vector3(3.2, 0.12, 1.55), dark, ship_root)
+		_add_cylinder("Landing engine", ship_position + Vector3(side * 0.68, 0.58, 0.0), 0.34, 0.42, dark, 8, procedural_hull)
+		_add_box("Solar wing", ship_position + Vector3(side * 4.25, 2.4, 0.0), Vector3(3.2, 0.12, 1.55), dark, procedural_hull)
 		for row in range(3):
-			_add_box("Solar cell row", ship_position + Vector3(side * 4.25, 2.48, -0.49 + row * 0.49), Vector3(2.95, 0.035, 0.035), quiet, ship_root)
+			_add_box("Solar cell row", ship_position + Vector3(side * 4.25, 2.48, -0.49 + row * 0.49), Vector3(2.95, 0.035, 0.035), quiet, procedural_hull)
 		var foot := ship_position + Vector3(side * 3.1, 0.12, 1.7)
-		_add_cylinder_between("Landing leg", ship_position + Vector3(side * 0.75, 1.55, 0.4), foot + Vector3(0.0, 0.5, 0.0), 0.12, pale, ship_root)
-		_add_box("Landing foot", foot, Vector3(0.72, 0.17, 0.66), dark, ship_root)
+		_add_cylinder_between("Landing leg", ship_position + Vector3(side * 0.75, 1.55, 0.4), foot + Vector3(0.0, 0.5, 0.0), 0.12, pale, procedural_hull)
+		_add_box("Landing foot", foot, Vector3(0.72, 0.17, 0.66), dark, procedural_hull)
 	for side in [-1.0, 1.0]:
 		_add_cylinder_between("Broken cable", ship_position + Vector3(side * 1.6, 2.05, -0.1), ship_position + Vector3(side * 2.35, 0.45, 0.72), 0.045, alert, ship_root)
 	_add_cylinder_between("Bent antenna mast", ship_position + Vector3(0.0, 4.0, 0.0), ship_position + Vector3(0.72, 5.2, 0.24), 0.055, dark, ship_root)
 	_add_box("Missing radio array socket", ship_position + Vector3(0.0, 4.35, 0.28), Vector3(0.84, 0.1, 0.15), alert, ship_root)
 	_add_sphere("Broken power indicator", ship_position + Vector3(0.0, 4.15, -0.94), Vector3(0.16, 0.16, 0.08), alert, ship_root)
 	_add_label("RETURN SHIP  /  REPAIR REQUIRED", ship_position + Vector3(0.0, 6.3, 0.0), Color(0.9, 0.78, 0.55), ship_root)
+	_install_space_shuttle(procedural_hull)
+
+func _install_space_shuttle(procedural_fallback: Node3D) -> void:
+	if not ResourceLoader.exists(SPACE_SHUTTLE_MODEL_PATH):
+		return
+	var packed_model := load(SPACE_SHUTTLE_MODEL_PATH) as PackedScene
+	if packed_model == null:
+		push_warning("The shuttle asset must be a Godot-compatible GLB scene at %s." % SPACE_SHUTTLE_MODEL_PATH)
+		return
+	var shuttle := packed_model.instantiate() as Node3D
+	if shuttle == null:
+		push_warning("The shuttle model has no Node3D root; keeping the procedural return ship.")
+		return
+	shuttle.name = "Sketchfab Space Shuttle"
+	ship_root.add_child(shuttle)
+	var bounds := _get_node_mesh_bounds(shuttle)
+	if bounds.size.length_squared() < 0.001:
+		push_warning("The shuttle model contains no visible mesh; keeping the procedural return ship.")
+		shuttle.queue_free()
+		return
+	var horizontal_span := maxf(bounds.size.x, bounds.size.z)
+	var fit_scale := 15.5 / maxf(horizontal_span, 0.1)
+	shuttle.scale = Vector3.ONE * fit_scale
+	shuttle.rotation.y = PI
+	shuttle.position = ship_position + Vector3(0.0, -bounds.position.y * fit_scale + 0.12, 0.0)
+	for mesh_instance in shuttle.find_children("*", "MeshInstance3D", true, false):
+		mesh_instance.lod_bias = 1.4
+		mesh_instance.visibility_range_end = 500.0
+	procedural_fallback.visible = false
+
+func _get_node_mesh_bounds(root: Node3D) -> AABB:
+	var merged := AABB()
+	var has_bounds := false
+	for mesh_instance in root.find_children("*", "MeshInstance3D", true, false):
+		if mesh_instance.mesh == null:
+			continue
+		var relative_transform: Transform3D = root.global_transform.affine_inverse() * mesh_instance.global_transform
+		var mesh_bounds: AABB = _transform_bounds(mesh_instance.get_aabb(), relative_transform)
+		merged = mesh_bounds if not has_bounds else merged.merge(mesh_bounds)
+		has_bounds = true
+	return merged
+
+func _transform_bounds(bounds: AABB, transform: Transform3D) -> AABB:
+	var minimum := Vector3(INF, INF, INF)
+	var maximum := Vector3(-INF, -INF, -INF)
+	for x in [bounds.position.x, bounds.position.x + bounds.size.x]:
+		for y in [bounds.position.y, bounds.position.y + bounds.size.y]:
+			for z in [bounds.position.z, bounds.position.z + bounds.size.z]:
+				var point: Vector3 = transform * Vector3(x, y, z)
+				minimum = Vector3(minf(minimum.x, point.x), minf(minimum.y, point.y), minf(minimum.z, point.z))
+				maximum = Vector3(maxf(maximum.x, point.x), maxf(maximum.y, point.y), maxf(maximum.z, point.z))
+	return AABB(minimum, maximum - minimum)
 
 func _create_pickups() -> void:
 	for item_data in ITEM_LAYOUT:
@@ -285,7 +341,8 @@ func _create_repair_points() -> void:
 		_repair_visuals[id] = {"ring": ring, "status": status, "light": light}
 		_refresh_repair_visual(id)
 
-	_cockpit_position = Vector3(ship_position.x, terrain.height_at(ship_position.x, ship_position.z - 2.0), ship_position.z - 2.0)
+	var cockpit_z := ship_position.z - 6.2
+	_cockpit_position = Vector3(ship_position.x, terrain.height_at(ship_position.x, cockpit_z), cockpit_z)
 
 func _refresh_repair_visual(id: String) -> void:
 	if not _repair_visuals.has(id):

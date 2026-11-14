@@ -12,6 +12,45 @@ const WALK_SPEED := 6.2
 const BOOST_SPEED := 9.4
 const GROUND_ACCELERATION := 20.0
 const AIR_ACCELERATION := 6.2
+const ASTRONAUT_MODEL_PATH := "res://assets/characters/astronaut_by_jungle_jim.glb"
+const KNOCKBACK_COOLDOWN := 1.15
+
+const LEG_MOTION_SHADER := """
+shader_type spatial;
+render_mode diffuse_burley, specular_schlick_ggx;
+
+uniform vec4 suit_color : source_color = vec4(1.0);
+uniform float suit_metallic = 0.0;
+uniform float suit_roughness = 0.8;
+uniform vec3 suit_emission : source_color = vec3(0.0);
+uniform float suit_emission_energy = 0.0;
+uniform float step_phase = 0.0;
+uniform float step_swing = 0.0;
+
+void vertex() {
+	float leg_weight = 1.0 - smoothstep(0.34, 0.49, VERTEX.y);
+	float side = VERTEX.x < 0.0 ? -1.0 : 1.0;
+	float phase = step_phase + (side > 0.0 ? PI : 0.0);
+	float angle = sin(phase) * step_swing;
+	vec3 pivot = vec3(side * 0.11, 0.40, 0.0);
+	vec3 local_position = VERTEX - pivot;
+	float cosine = cos(angle);
+	float sine = sin(angle);
+	vec3 moved_position = vec3(
+		local_position.x,
+		local_position.y * cosine - local_position.z * sine,
+		local_position.y * sine + local_position.z * cosine
+	);
+	VERTEX = mix(VERTEX, pivot + moved_position, leg_weight);
+}
+
+void fragment() {
+	ALBEDO = suit_color.rgb;
+	METALLIC = suit_metallic;
+	ROUGHNESS = suit_roughness;
+	EMISSION = suit_emission * suit_emission_energy;
+}
+"""
 
 var boost_fuel := 100.0
 var mission_time := 0.0
@@ -20,6 +59,10 @@ var _camera: Camera3D
 var _visuals: Node3D
 var _fuel_burn_rate := 18.0
 var _surface_grounded := false
+var _knockback_cooldown := 0.0
+var _step_phase := 0.0
+var _step_amount := 0.0
+var _walking_materials: Array[ShaderMaterial] = []
 
 func _ready() -> void:
 	name = "Astronaut"
@@ -30,6 +73,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	mission_time += delta
+	_knockback_cooldown = maxf(0.0, _knockback_cooldown - delta)
 	var yaw := _camera_pivot.rotation.y
 	var forward := Vector3(-sin(yaw), 0.0, -cos(yaw))
 	var right := Vector3(cos(yaw), 0.0, -sin(yaw))
@@ -73,7 +117,7 @@ func _physics_process(delta: float) -> void:
 			_surface_grounded = true
 		else:
 			_surface_grounded = is_on_floor()
-	_animate_suit(delta, wish)
+	_animate_suit(delta, wish, boosting)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -103,6 +147,21 @@ func set_camera_yaw(value: float) -> void:
 func get_follow_camera() -> Camera3D:
 	return _camera
 
+func apply_knockback(from_position: Vector3, horizontal_force := 8.6, upward_force := 2.7) -> bool:
+	if _knockback_cooldown > 0.0:
+		return false
+	var away := global_position - from_position
+	away.y = 0.0
+	if away.length_squared() < 0.001:
+		away = -global_transform.basis.z
+		away.y = 0.0
+	away = away.normalized()
+	velocity.x = away.x * horizontal_force
+	velocity.z = away.z * horizontal_force
+	velocity.y = maxf(velocity.y, upward_force)
+	_knockback_cooldown = KNOCKBACK_COOLDOWN
+	return true
+
 func _build_body() -> void:
 	var collision := CollisionShape3D.new()
 	var capsule := CapsuleShape3D.new()
@@ -115,6 +174,8 @@ func _build_body() -> void:
 	_visuals = Node3D.new()
 	_visuals.name = "Astronaut suit"
 	add_child(_visuals)
+	if _load_astronaut_model():
+		return
 
 	var suit := _material(Color(0.82, 0.82, 0.77), 0.78)
 	var suit_light := _material(Color(0.94, 0.92, 0.84), 0.72)
@@ -154,16 +215,61 @@ func _build_camera() -> void:
 	_camera.rotation.x = -atan2(1.65, 8.2)
 	_camera.fov = 70.0
 	_camera.near = 0.08
-	_camera.far = 340.0
+	_camera.far = 1900.0
 	_camera.current = true
 	_camera_pivot.add_child(_camera)
 
-func _animate_suit(delta: float, wish: Vector3) -> void:
+func _load_astronaut_model() -> bool:
+	if not ResourceLoader.exists(ASTRONAUT_MODEL_PATH):
+		return false
+	var packed_model := load(ASTRONAUT_MODEL_PATH) as PackedScene
+	if packed_model == null:
+		push_warning("The astronaut GLB could not be loaded. Using the built-in suit model.")
+		return false
+	var model := packed_model.instantiate() as Node3D
+	if model == null:
+		push_warning("The astronaut GLB has no Node3D root. Using the built-in suit model.")
+		return false
+	model.name = "Jungle Jim astronaut"
+	model.scale = Vector3.ONE * 2.0
+	model.rotation.y = PI
+	_visuals.add_child(model)
+	var motion_shader := Shader.new()
+	motion_shader.code = LEG_MOTION_SHADER
+	_apply_leg_shader(model, motion_shader)
+	return true
+
+func _apply_leg_shader(root: Node, motion_shader: Shader) -> void:
+	for child in root.get_children():
+		if child is MeshInstance3D and child.mesh != null:
+			var mesh_instance := child as MeshInstance3D
+			for surface_index in range(mesh_instance.mesh.get_surface_count()):
+				var source_material := mesh_instance.mesh.surface_get_material(surface_index) as StandardMaterial3D
+				var walking_material := ShaderMaterial.new()
+				walking_material.shader = motion_shader
+				walking_material.set_shader_parameter("suit_color", source_material.albedo_color if source_material != null else Color.WHITE)
+				walking_material.set_shader_parameter("suit_metallic", source_material.metallic if source_material != null else 0.0)
+				walking_material.set_shader_parameter("suit_roughness", source_material.roughness if source_material != null else 0.8)
+				walking_material.set_shader_parameter("suit_emission", source_material.emission if source_material != null and source_material.emission_enabled else Color.BLACK)
+				walking_material.set_shader_parameter("suit_emission_energy", source_material.emission_energy_multiplier if source_material != null and source_material.emission_enabled else 0.0)
+				mesh_instance.set_surface_override_material(surface_index, walking_material)
+				_walking_materials.append(walking_material)
+		_apply_leg_shader(child, motion_shader)
+
+func _animate_suit(delta: float, wish: Vector3, boosting: bool) -> void:
 	if wish.length_squared() > 0.01:
 		var target_yaw := atan2(-wish.x, -wish.z)
 		_visuals.rotation.y = lerp_angle(_visuals.rotation.y, target_yaw, minf(1.0, delta * 7.0))
 	var speed := Vector2(velocity.x, velocity.z).length()
-	var bob := sin(mission_time * 8.5) * minf(0.055, speed * 0.008) if is_on_floor() else 0.0
+	var moving := (is_on_floor() or _surface_grounded) and speed > 0.45
+	var target_step_amount := (0.36 if boosting else 0.24) if moving else 0.0
+	_step_amount = move_toward(_step_amount, target_step_amount, delta * 2.8)
+	if _step_amount > 0.001:
+		_step_phase = fposmod(_step_phase + delta * TAU * (1.62 if boosting else 1.18), TAU)
+	for walking_material in _walking_materials:
+		walking_material.set_shader_parameter("step_phase", _step_phase)
+		walking_material.set_shader_parameter("step_swing", _step_amount)
+	var bob := sin(mission_time * 8.5) * minf(0.035, speed * 0.005) if is_on_floor() or _surface_grounded else 0.0
 	_visuals.position.y = bob
 	_visuals.rotation.z = lerpf(_visuals.rotation.z, -wish.x * 0.025, minf(1.0, delta * 4.0))
 

@@ -3,6 +3,7 @@ extends Node3D
 const TERRAIN_SCRIPT := preload("res://scripts/lunar_terrain.gd")
 const PLAYER_SCRIPT := preload("res://scripts/astronaut.gd")
 const MISSION_SCRIPT := preload("res://scripts/mission_controller.gd")
+const ALIEN_SCRIPT := preload("res://scripts/alien_npc.gd")
 
 var terrain: LunarTerrain
 var astronaut: LunarAstronaut
@@ -20,6 +21,7 @@ func _ready() -> void:
 	add_child(terrain)
 	_build_landmarks()
 	_build_player()
+	_spawn_aliens()
 	mission_control = MISSION_SCRIPT.new()
 	mission_control.name = "Mission control"
 	add_child(mission_control)
@@ -82,7 +84,7 @@ func _add_starfield() -> void:
 	for index in range(stars.instance_count):
 		var angle := rng.randf_range(0.0, TAU)
 		var elevation := rng.randf_range(0.08, 1.25)
-		var radius := rng.randf_range(175.0, 240.0)
+		var radius := rng.randf_range(1350.0, 1650.0)
 		var point := Vector3(cos(angle) * cos(elevation) * radius, sin(elevation) * radius + 10.0, sin(angle) * cos(elevation) * radius)
 		var scale := rng.randf_range(0.45, 1.5)
 		stars.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ONE * scale), point))
@@ -94,8 +96,8 @@ func _add_starfield() -> void:
 
 func _add_earth() -> void:
 	var globe := SphereMesh.new()
-	globe.radius = 8.0
-	globe.height = 16.0
+	globe.radius = 11.0
+	globe.height = 22.0
 	globe.radial_segments = 56
 	globe.rings = 28
 	var planet_shader := Shader.new()
@@ -123,14 +125,14 @@ func _add_earth() -> void:
 	earth_visual.name = "Earthrise"
 	earth_visual.mesh = globe
 	earth_visual.material_override = water
-	earth_visual.position = Vector3(-82.0, 50.0, -135.0)
-	earth_visual.visibility_range_end = 450.0
+	earth_visual.position = Vector3(420.0, 85.0, -500.0)
+	earth_visual.visibility_range_end = 1650.0
 	add_child(earth_visual)
 	var atmosphere := MeshInstance3D.new()
 	atmosphere.name = "Earth atmosphere"
 	var atmosphere_mesh := SphereMesh.new()
-	atmosphere_mesh.radius = 8.35
-	atmosphere_mesh.height = 16.7
+	atmosphere_mesh.radius = 11.45
+	atmosphere_mesh.height = 22.9
 	atmosphere_mesh.radial_segments = 56
 	atmosphere_mesh.rings = 28
 	atmosphere.mesh = atmosphere_mesh
@@ -148,7 +150,7 @@ func _add_earth() -> void:
 	earth_halo.name = "Earth glow"
 	earth_halo.light_color = Color(0.15, 0.35, 0.78)
 	earth_halo.light_energy = 5.5
-	earth_halo.omni_range = 22.0
+	earth_halo.omni_range = 36.0
 	earth_halo.position = earth_visual.position
 	add_child(earth_halo)
 
@@ -166,6 +168,25 @@ func _build_player() -> void:
 	astronaut.position = habitat_position + Vector3(0.0, 0.16, 5.2)
 	add_child(astronaut)
 	astronaut.set_camera_yaw(-0.68)
+	astronaut.collision_mask |= 2
+
+func _spawn_aliens() -> void:
+	var spawn_points := [
+		Vector2(30.0, 16.0),
+		Vector2(43.0, -22.0),
+		Vector2(-29.0, -19.0),
+		Vector2(-47.0, -49.0),
+		Vector2(59.0, 23.0),
+		Vector2(-62.0, 20.0),
+		Vector2(9.0, -55.0),
+		Vector2(76.0, -41.0)
+	]
+	for index in range(spawn_points.size()):
+		var point: Vector2 = spawn_points[index]
+		var alien: LunarAlien = ALIEN_SCRIPT.new()
+		alien.name = "Lunar alien %02d" % (index + 1)
+		alien.configure(terrain, _ground_point(point), 8.0 + float(index % 3) * 2.0, index + 1)
+		add_child(alien)
 
 func _ground_point(point: Vector2) -> Vector3:
 	return Vector3(point.x, terrain.height_at(point.x, point.y), point.y)
