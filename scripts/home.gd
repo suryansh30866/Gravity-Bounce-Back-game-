@@ -48,9 +48,9 @@ func _build_screen() -> void:
 	title.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.56))
 	title.add_theme_constant_override("shadow_offset_y", 3)
 	content.add_child(title)
-	var subhead := _label("The Moon holds you at 1.62 m/s².", 18, Color("cbd2cc"))
+	var subhead := _label("Repair your ship. Find your way home.", 18, Color("cbd2cc"))
 	content.add_child(subhead)
-	var description := _label("A silent world. A stranded crew.\nEvery step carries a little farther.", 13, Color("a9b5b2"))
+	var description := _label("Search the lunar surface for lost parts.\nFollow your commander's advice and rebuild the return ship.", 13, Color("a9b5b2"))
 	description.add_theme_constant_override("line_spacing", 4)
 	content.add_child(description)
 	var spacing := Control.new()
@@ -96,7 +96,7 @@ func _build_screen() -> void:
 	coordinates.add_theme_constant_override("line_spacing", 4)
 	location_copy.add_child(coordinates)
 
-	var controls := _label("W A S D  MOVE      /      MOUSE  LOOK      /      SPACE  JUMP      /      E  INTERACT", 9, Color("93a7a3"))
+	var controls := _label("W A S D  MOVE   /   MOUSE  LOOK   /   SPACE  JUMP   /   E  USE   /   I  PACK   /   H  HINT", 9, Color("93a7a3"))
 	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	controls.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	controls.position = Vector2(-48.0, -166.0)
@@ -115,10 +115,10 @@ func _add_mission_cards() -> void:
 	rail.add_theme_constant_override("separation", 14)
 	add_child(rail)
 	var missions := [
-		["01", "REACH THE LANDER", "Cross the cratered mare."],
-		["02", "RESTORE POWER", "Wake the surface systems."],
-		["03", "SEND THE SIGNAL", "Find the ridge-top relay."],
-		["04", "RETURN HOME", "Make it back to the habitat."],
+		["01", "FIND THE SHIP", "Reach the damaged return ship."],
+		["02", "COLLECT PARTS", "Search for parts and connectors."],
+		["03", "REPAIR THE SHIP", "Reconnect cables and systems."],
+		["04", "FLY TO EARTH", "Launch the ship and go home."],
 	]
 	for mission in missions:
 		var card := _panel(Color(0.025, 0.044, 0.056, 0.76), Color(0.6, 0.73, 0.69, 0.24))
@@ -136,7 +136,7 @@ func _add_mission_cards() -> void:
 
 func _new_game_button() -> Button:
 	var button := Button.new()
-	button.text = "BEGIN EXPEDITION       ↗"
+	button.text = "START REPAIR MISSION       ↗"
 	button.custom_minimum_size = Vector2(252.0, 52.0)
 	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	button.add_theme_font_size_override("font_size", 11)

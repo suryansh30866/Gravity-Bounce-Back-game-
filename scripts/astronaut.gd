@@ -2,12 +2,16 @@ extends CharacterBody3D
 class_name LunarAstronaut
 
 signal interact_pressed
+signal inventory_pressed
+signal hint_pressed
+signal command_log_pressed
+signal menu_pressed
 
 const LUNAR_GRAVITY := 1.62
-const WALK_SPEED := 7.6
-const BOOST_SPEED := 11.2
-const GROUND_ACCELERATION := 24.0
-const AIR_ACCELERATION := 8.5
+const WALK_SPEED := 6.2
+const BOOST_SPEED := 9.4
+const GROUND_ACCELERATION := 20.0
+const AIR_ACCELERATION := 6.2
 
 var boost_fuel := 100.0
 var mission_time := 0.0
@@ -52,10 +56,10 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y -= LUNAR_GRAVITY * delta
 		if boosting:
-			velocity.y = minf(8.4, velocity.y + 5.6 * delta)
+			velocity.y = minf(7.2, velocity.y + 4.2 * delta)
 			boost_fuel = maxf(0.0, boost_fuel - _fuel_burn_rate * delta)
 	if Input.is_key_pressed(KEY_SPACE) and grounded:
-		velocity.y = 6.8
+		velocity.y = 5.0
 		boost_fuel = maxf(0.0, boost_fuel - 5.0)
 
 	move_and_slide()
@@ -78,9 +82,26 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_E:
 			interact_pressed.emit()
+		elif event.keycode == KEY_I:
+			inventory_pressed.emit()
+		elif event.keycode == KEY_H:
+			hint_pressed.emit()
+		elif event.keycode == KEY_C:
+			command_log_pressed.emit()
 		elif event.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-			get_tree().change_scene_to_file("res://scenes/home.tscn")
+			menu_pressed.emit()
+		elif event.keycode == KEY_TAB:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else Input.MOUSE_MODE_CAPTURED
+
+func get_camera_yaw() -> float:
+	return _camera_pivot.rotation.y
+
+func set_camera_yaw(value: float) -> void:
+	_camera_pivot.rotation.y = value
+
+func get_follow_camera() -> Camera3D:
+	return _camera
 
 func _build_body() -> void:
 	var collision := CollisionShape3D.new()
@@ -133,7 +154,7 @@ func _build_camera() -> void:
 	_camera.rotation.x = -atan2(1.65, 8.2)
 	_camera.fov = 70.0
 	_camera.near = 0.08
-	_camera.far = 320.0
+	_camera.far = 340.0
 	_camera.current = true
 	_camera_pivot.add_child(_camera)
 
