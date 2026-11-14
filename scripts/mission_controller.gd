@@ -93,6 +93,9 @@ var _cockpit_position := Vector3.ZERO
 var _marker: Node3D
 var _marker_target := Vector3.ZERO
 var _marker_label: Label3D
+var _marker_arrow_root: Node3D
+var _direction_arrow_label: Label
+var _arrow_clock := 0.0
 var _earth: MeshInstance3D
 var _earth_halo: OmniLight3D
 var _launch_started := false
@@ -151,8 +154,15 @@ func _process(delta: float) -> void:
 		if _toast_timer <= 0.0:
 			_toast_label.modulate.a = 0.0
 	if is_instance_valid(_marker) and mission_phase < 6:
-		_marker.rotation.y += delta * 0.7
-		_marker.global_position = _marker_target + Vector3.UP * (2.7 + sin(Time.get_ticks_msec() * 0.0017) * 0.24)
+		_arrow_clock += delta
+		_marker.rotation.y += delta * 1.05
+		_marker.global_position = _marker_target + Vector3.UP * (2.45 + sin(_arrow_clock * 3.0) * 0.42)
+		if is_instance_valid(_marker_arrow_root):
+			var arrow_bob := sin(_arrow_clock * 4.2)
+			_marker_arrow_root.position = Vector3(sin(_arrow_clock * 2.6) * 0.2, 0.48 + arrow_bob * 0.26, cos(_arrow_clock * 1.9) * 0.08)
+			_marker_arrow_root.rotation.z = sin(_arrow_clock * 2.6) * 0.16
+			var arrow_scale := 1.0 + (0.5 + 0.5 * sin(_arrow_clock * 5.0)) * 0.16
+			_marker_arrow_root.scale = Vector3.ONE * arrow_scale
 	_update_mission_progress()
 	_update_hud()
 	if mission_phase == 6 and Input.is_key_pressed(KEY_R):
@@ -369,26 +379,30 @@ func _build_world_marker() -> void:
 	ring.rotation_degrees.x = 90.0
 	ring.material_override = _emissive(Color(0.23, 0.95, 0.88))
 	_marker.add_child(ring)
+	_marker_arrow_root = Node3D.new()
+	_marker_arrow_root.name = "Bobbing direction arrow"
+	_marker_arrow_root.position.y = 0.48
+	_marker.add_child(_marker_arrow_root)
 	var arrow := MeshInstance3D.new()
 	var arrow_mesh := CylinderMesh.new()
 	arrow_mesh.top_radius = 0.0
-	arrow_mesh.bottom_radius = 0.28
-	arrow_mesh.height = 0.65
+	arrow_mesh.bottom_radius = 0.4
+	arrow_mesh.height = 0.78
 	arrow.mesh = arrow_mesh
-	arrow.position.y = 1.05
+	arrow.position.y = 1.3
 	arrow.material_override = _emissive(Color(0.45, 1.0, 0.9))
-	_marker.add_child(arrow)
+	_marker_arrow_root.add_child(arrow)
 	var stem := MeshInstance3D.new()
 	var stem_mesh := CylinderMesh.new()
-	stem_mesh.top_radius = 0.035
-	stem_mesh.bottom_radius = 0.08
-	stem_mesh.height = 1.25
+	stem_mesh.top_radius = 0.06
+	stem_mesh.bottom_radius = 0.1
+	stem_mesh.height = 1.0
 	stem.mesh = stem_mesh
-	stem.position.y = -0.72
+	stem.position.y = 0.55
 	stem.material_override = _emissive(Color(0.18, 0.68, 0.7))
-	_marker.add_child(stem)
-	_marker_label = _label_3d("NEXT TASK", 25, Color(0.66, 0.96, 0.89))
-	_marker_label.position = Vector3(0.0, 1.55, 0.0)
+	_marker_arrow_root.add_child(stem)
+	_marker_label = _label_3d("NEXT TASK", 32, Color(0.66, 0.96, 0.89))
+	_marker_label.position = Vector3(0.0, 2.12, 0.0)
 	_marker.add_child(_marker_label)
 	add_child(_marker)
 
@@ -429,13 +443,25 @@ func _build_hud() -> void:
 	_phase_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	objective_copy.add_child(_phase_detail)
 
-	_distance_label = _label("↑  000 M  /  OBJECTIVE", 11, Color(0.76, 0.92, 0.87))
+	_direction_arrow_label = _label("↑", 38, Color(0.42, 1.0, 0.88))
+	_direction_arrow_label.anchor_left = 0.5
+	_direction_arrow_label.anchor_right = 0.5
+	_direction_arrow_label.offset_left = -31.0
+	_direction_arrow_label.offset_top = 108.0
+	_direction_arrow_label.offset_right = 31.0
+	_direction_arrow_label.offset_bottom = 151.0
+	_direction_arrow_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_direction_arrow_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_direction_arrow_label.resized.connect(func(): _direction_arrow_label.pivot_offset = _direction_arrow_label.size * 0.5)
+	root.add_child(_direction_arrow_label)
+
+	_distance_label = _label("000 M  •  FOLLOW THE MARKER", 15, Color(0.76, 0.92, 0.87))
 	_distance_label.anchor_left = 0.5
 	_distance_label.anchor_right = 0.5
-	_distance_label.offset_left = -180.0
-	_distance_label.offset_top = 113.0
-	_distance_label.offset_right = 180.0
-	_distance_label.offset_bottom = 137.0
+	_distance_label.offset_left = -240.0
+	_distance_label.offset_top = 153.0
+	_distance_label.offset_right = 240.0
+	_distance_label.offset_bottom = 179.0
 	_distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	root.add_child(_distance_label)
 
@@ -898,7 +924,7 @@ func _update_marker_target() -> void:
 		5:
 			_marker_target = _cockpit_position
 			_marker_label.text = "COCKPIT"
-	_marker.global_position = _marker_target + Vector3.UP * 2.7
+	_marker.global_position = _marker_target + Vector3.UP * (2.45 + sin(_arrow_clock * 3.0) * 0.42)
 
 func _nearest_pickup_key() -> String:
 	var nearest := ""
@@ -926,10 +952,17 @@ func _update_hud() -> void:
 	var camera_yaw: float = astronaut.get_camera_yaw()
 	var camera_forward := Vector3(-sin(camera_yaw), 0.0, -cos(camera_yaw))
 	var bearing := atan2(camera_forward.cross(direction).y, camera_forward.dot(direction))
-	var arrow := "↑"
-	if absf(bearing) > 0.42:
-		arrow = "←" if bearing > 0.0 else "→"
-	_distance_label.text = "%s  %03d M  /  %s" % [arrow, int(horizontal_distance), "WAYPOINT" if horizontal_distance < 4.0 else "FOLLOW THE MARKER"]
+	_direction_arrow_label.text = _arrow_for_bearing(bearing)
+	var arrow_side_shift := -sin(bearing) * 76.0
+	var arrow_bounce := absf(sin(_arrow_clock * 5.2)) * 11.0
+	var arrow_pulse := 1.0 + (0.5 + 0.5 * sin(_arrow_clock * 5.2)) * 0.16
+	var behind_shift := 9.0 if absf(bearing) > 2.35 else 0.0
+	_direction_arrow_label.offset_left = -31.0 + arrow_side_shift
+	_direction_arrow_label.offset_right = 31.0 + arrow_side_shift
+	_direction_arrow_label.offset_top = 108.0 + behind_shift - arrow_bounce
+	_direction_arrow_label.offset_bottom = 151.0 + behind_shift - arrow_bounce
+	_direction_arrow_label.scale = Vector2.ONE * arrow_pulse
+	_distance_label.text = "%03d M  •  %s" % [int(horizontal_distance), "WAYPOINT" if horizontal_distance < 4.0 else "FOLLOW THE MARKER"]
 	_boost_bar.value = astronaut.boost_fuel
 	_mission_clock_label.text = "%02d:%02d  /  SURFACE TIME" % [int(mission_seconds / 60.0), int(fmod(mission_seconds, 60.0))]
 	_update_interaction_prompt()
@@ -937,9 +970,23 @@ func _update_hud() -> void:
 	if mission_phase == 6:
 		_distance_label.visible = false
 		_interaction_label.visible = false
+		_direction_arrow_label.visible = false
 	else:
 		_distance_label.visible = true
 		_interaction_label.visible = true
+		_direction_arrow_label.visible = true
+
+func _arrow_for_bearing(bearing: float) -> String:
+	var angle := absf(bearing)
+	if angle < 0.35:
+		return "↑"
+	if angle < 1.05:
+		return "↖" if bearing > 0.0 else "↗"
+	if angle < 1.95:
+		return "←" if bearing > 0.0 else "→"
+	if angle < 2.6:
+		return "↙" if bearing > 0.0 else "↘"
+	return "↓"
 
 func _update_interaction_prompt() -> void:
 	var text := ""

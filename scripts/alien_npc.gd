@@ -3,12 +3,19 @@ class_name LunarAlien
 
 const ALIEN_MODEL_PATH := "res://assets/aliens/alien_11.obj"
 const LUNAR_GRAVITY := 1.62
+# The OBJ's body axis is tilted in its authored Y/Z plane; the positive axis
+# points from the head toward the feet.
+const ALIEN_FEET_AXIS := Vector3(0.0, 0.82939796, 0.55865823)
+const ALIEN_HEAD_PROJECTION := -1.1564
+const ALIEN_FEET_PROJECTION := 8.5376
 
 var terrain: LunarTerrain
 var patrol_origin := Vector3.ZERO
 var patrol_radius := 9.0
 var _visual_root: Node3D
 var _visual_base_y := 0.0
+var _visual_yaw := PI
+var _visual_alignment := Basis.IDENTITY
 var _roam_target := Vector3.ZERO
 var _wait_timer := 0.0
 var _roaming := false
@@ -51,7 +58,8 @@ func _physics_process(delta: float) -> void:
 			var direction := toward.normalized()
 			horizontal = horizontal.move_toward(direction * _roam_speed, 2.4 * delta)
 			if _visual_root != null:
-				_visual_root.rotation.y = lerp_angle(_visual_root.rotation.y, atan2(-direction.x, -direction.z) + PI, minf(1.0, delta * 4.0))
+				var facing_yaw := atan2(-direction.x, -direction.z) + PI
+				_set_visual_yaw(lerp_angle(_visual_yaw, facing_yaw, minf(1.0, delta * 4.0)))
 	else:
 		horizontal = horizontal.move_toward(Vector3.ZERO, 2.7 * delta)
 	velocity.x = horizontal.x
@@ -100,16 +108,17 @@ func _build_visual() -> void:
 	if model == null:
 		push_warning("Alien model not found at %s; this NPC has no visible model." % ALIEN_MODEL_PATH)
 		return
-	var bounds := model.get_aabb()
 	var target_height := 2.15
-	var fit_scale := target_height / maxf(bounds.size.y, 0.1)
-	# The supplied OBJ is authored upside down: its maximum local Y is the
-	# foot plane. Flip it over and use that edge as the ground contact point.
-	_visual_base_y = bounds.end.y * fit_scale
+	var model_height := ALIEN_FEET_PROJECTION - ALIEN_HEAD_PROJECTION
+	var fit_scale := target_height / maxf(model_height, 0.1)
+	# Rotate the model's slanted body axis straight down so the feet meet the
+	# terrain and the torso stands vertical. This also removes the visible lean.
+	_visual_base_y = ALIEN_FEET_PROJECTION * fit_scale
+	_visual_alignment = Basis(Quaternion(ALIEN_FEET_AXIS, Vector3.DOWN))
 	_visual_root = Node3D.new()
 	_visual_root.name = "Alien visual"
 	_visual_root.position.y = _visual_base_y
-	_visual_root.rotation = Vector3(PI, PI, 0.0)
+	_set_visual_yaw(PI)
 	add_child(_visual_root)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "Alien mesh"
@@ -124,6 +133,11 @@ func _build_visual() -> void:
 	material.metallic = 0.02
 	mesh_instance.material_override = material
 	_visual_root.add_child(mesh_instance)
+
+func _set_visual_yaw(yaw: float) -> void:
+	_visual_yaw = yaw
+	if is_instance_valid(_visual_root):
+		_visual_root.basis = Basis(Vector3.UP, _visual_yaw) * _visual_alignment
 
 func _choose_roam_target() -> void:
 	var angle := _random.randf_range(0.0, TAU)
