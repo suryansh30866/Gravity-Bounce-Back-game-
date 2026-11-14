@@ -99,6 +99,16 @@ var _arrow_clock := 0.0
 var _earth: MeshInstance3D
 var _earth_halo: OmniLight3D
 var _launch_started := false
+var _shuttle_flight_pivot: Node3D
+var _shuttle_flight_attitude: Node3D
+var _launch_flames: Array[MeshInstance3D] = []
+var _launch_dust: GPUParticles3D
+var _launch_engine_light: OmniLight3D
+var _launch_camera_pivot: Node3D
+var _launch_camera_rest_position := Vector3.ZERO
+var _launch_shake_strength := 0.0
+var _launch_effect_clock := 0.0
+var _launch_engines_active := false
 var _stream_clock := 0.0
 var _command_log: Array[String] = []
 
@@ -144,6 +154,7 @@ func configure(terrain_ref: LunarTerrain, player: LunarAstronaut, habitat: Vecto
 func _process(delta: float) -> void:
 	if astronaut == null or terrain == null:
 		return
+	_update_launch_effects(delta)
 	mission_seconds += delta
 	_stream_clock += delta
 	if _stream_clock >= 0.5:
@@ -167,6 +178,27 @@ func _process(delta: float) -> void:
 	_update_hud()
 	if mission_phase == 6 and Input.is_key_pressed(KEY_R):
 		get_tree().reload_current_scene()
+
+func _update_launch_effects(delta: float) -> void:
+	_launch_effect_clock += delta
+	if is_instance_valid(_launch_camera_pivot):
+		if _launch_shake_strength > 0.001:
+			var time := _launch_effect_clock
+			var shake := _launch_shake_strength
+			_launch_camera_pivot.position = _launch_camera_rest_position + Vector3(sin(time * 47.0) * shake, sin(time * 71.0 + 1.3) * shake * 0.68, cos(time * 59.0) * shake * 0.52)
+		else:
+			_launch_camera_pivot.position = _launch_camera_rest_position
+	if _launch_engines_active:
+		var flicker_phase := _launch_effect_clock * 18.0
+		for index in range(_launch_flames.size()):
+			var flame := _launch_flames[index]
+			flame.scale.y = 0.78 + 0.22 * (0.5 + 0.5 * sin(flicker_phase + float(index) * 1.7))
+		if is_instance_valid(_launch_engine_light):
+			_launch_engine_light.light_energy = 3.8 + 0.65 * sin(flicker_phase * 0.75)
+
+func _set_launch_attitude(pitch: float, yaw: float) -> void:
+	if is_instance_valid(_shuttle_flight_attitude):
+		_shuttle_flight_attitude.basis = Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch) * Basis(Vector3.UP, PI)
 
 func _build_return_ship() -> void:
 	ship_root = Node3D.new()
@@ -219,6 +251,7 @@ func _build_return_ship() -> void:
 	_add_sphere("Broken power indicator", ship_position + Vector3(0.0, 4.15, -0.94), Vector3(0.16, 0.16, 0.08), alert, ship_root)
 	_add_label("RETURN SHIP  /  REPAIR REQUIRED", ship_position + Vector3(0.0, 6.3, 0.0), Color(0.9, 0.78, 0.55), ship_root)
 	_install_space_shuttle(procedural_hull)
+	_build_lunar_dust()
 
 func _install_space_shuttle(procedural_fallback: Node3D) -> void:
 	if not ResourceLoader.exists(SPACE_SHUTTLE_MODEL_PATH):
@@ -240,13 +273,112 @@ func _install_space_shuttle(procedural_fallback: Node3D) -> void:
 		return
 	var horizontal_span := maxf(bounds.size.x, bounds.size.z)
 	var fit_scale := 15.5 / maxf(horizontal_span, 0.1)
+	var center := bounds.get_center()
+	ship_root.remove_child(shuttle)
+	_shuttle_flight_pivot = Node3D.new()
+	_shuttle_flight_pivot.name = "Shuttle flight pivot"
+	_shuttle_flight_pivot.position = ship_position + Vector3(-center.x * fit_scale, bounds.size.y * 0.5 * fit_scale + 0.12, -center.z * fit_scale)
+	ship_root.add_child(_shuttle_flight_pivot)
+	_shuttle_flight_attitude = Node3D.new()
+	_shuttle_flight_attitude.name = "Shuttle launch attitude"
+	_shuttle_flight_attitude.basis = Basis(Vector3.UP, PI)
+	_shuttle_flight_pivot.add_child(_shuttle_flight_attitude)
+	_shuttle_flight_attitude.add_child(shuttle)
+	shuttle.position = -center * fit_scale
 	shuttle.scale = Vector3.ONE * fit_scale
-	shuttle.rotation.y = PI
-	shuttle.position = ship_position + Vector3(0.0, -bounds.position.y * fit_scale + 0.12, 0.0)
 	for mesh_instance in shuttle.find_children("*", "MeshInstance3D", true, false):
 		mesh_instance.lod_bias = 1.4
 		mesh_instance.visibility_range_end = 500.0
+	_build_engine_plumes(bounds, center, fit_scale)
 	procedural_fallback.visible = false
+
+func _build_engine_plumes(bounds: AABB, center: Vector3, fit_scale: float) -> void:
+	_launch_flames.clear()
+	var tail_z := (bounds.position.z + bounds.size.z * 0.1 - center.z) * fit_scale
+	var engine_y := (bounds.position.y + bounds.size.y * 0.2 - center.y) * fit_scale
+	var engine_spacing := bounds.size.x * 0.075 * fit_scale
+	var engine_offsets := [-engine_spacing, 0.0, engine_spacing]
+	for engine_index in range(engine_offsets.size()):
+		var nozzle := Vector3(float(engine_offsets[engine_index]), engine_y, tail_z)
+		_add_engine_flame(nozzle, 7.5, 0.46, Color(0.28, 0.72, 1.0, 0.34), 3.0)
+		_add_engine_flame(nozzle, 5.3, 0.24, Color(0.82, 0.95, 1.0, 0.82), 6.0)
+	_launch_engine_light = OmniLight3D.new()
+	_launch_engine_light.name = "Engine ignition light"
+	_launch_engine_light.position = Vector3(0.0, engine_y, tail_z)
+	_launch_engine_light.light_color = Color(0.38, 0.72, 1.0)
+	_launch_engine_light.light_energy = 0.0
+	_launch_engine_light.omni_range = 14.0
+	_shuttle_flight_attitude.add_child(_launch_engine_light)
+
+func _add_engine_flame(nozzle: Vector3, flame_length: float, flame_radius: float, color: Color, energy: float) -> void:
+	var flame := MeshInstance3D.new()
+	flame.name = "Main engine flame"
+	var flame_mesh := CylinderMesh.new()
+	flame_mesh.top_radius = 0.015
+	flame_mesh.bottom_radius = flame_radius
+	flame_mesh.height = flame_length
+	flame_mesh.radial_segments = 8
+	flame.mesh = flame_mesh
+	flame.rotation.x = -PI * 0.5
+	flame.position = nozzle + Vector3(0.0, 0.0, -flame_length * 0.5)
+	flame.material_override = _launch_flame_material(color, energy)
+	flame.visible = false
+	_shuttle_flight_attitude.add_child(flame)
+	_launch_flames.append(flame)
+
+func _launch_flame_material(color: Color, energy: float) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = Color(color.r, color.g, color.b)
+	material.emission_energy_multiplier = energy
+	return material
+
+func _build_lunar_dust() -> void:
+	_launch_dust = GPUParticles3D.new()
+	_launch_dust.name = "Lunar engine dust plume"
+	_launch_dust.position = ship_position + Vector3(0.0, 0.45, 0.0)
+	_launch_dust.amount = 320
+	_launch_dust.lifetime = 7.0
+	_launch_dust.explosiveness = 0.38
+	_launch_dust.one_shot = true
+	_launch_dust.emitting = false
+	_launch_dust.visibility_aabb = AABB(Vector3(-80.0, -20.0, -80.0), Vector3(160.0, 80.0, 160.0))
+	var dust_process := ParticleProcessMaterial.new()
+	dust_process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	dust_process.emission_sphere_radius = 1.7
+	dust_process.direction = Vector3(0.0, 0.9, 0.0)
+	dust_process.spread = 180.0
+	dust_process.initial_velocity_min = 3.5
+	dust_process.initial_velocity_max = 12.0
+	dust_process.gravity = Vector3(0.0, -0.65, 0.0)
+	dust_process.scale_min = 0.65
+	dust_process.scale_max = 2.1
+	var dust_gradient := Gradient.new()
+	dust_gradient.set_color(0, Color(0.7, 0.65, 0.56, 0.34))
+	dust_gradient.add_point(0.68, Color(0.62, 0.58, 0.5, 0.22))
+	dust_gradient.set_color(1, Color(0.55, 0.52, 0.46, 0.0))
+	var dust_ramp := GradientTexture1D.new()
+	dust_ramp.gradient = dust_gradient
+	dust_process.color_ramp = dust_ramp
+	_launch_dust.process_material = dust_process
+	var dust_mesh := SphereMesh.new()
+	dust_mesh.radius = 0.12
+	dust_mesh.height = 0.24
+	dust_mesh.radial_segments = 5
+	dust_mesh.rings = 3
+	var dust_surface := StandardMaterial3D.new()
+	dust_surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dust_surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dust_surface.albedo_color = Color.WHITE
+	dust_surface.vertex_color_use_as_albedo = true
+	dust_mesh.material = dust_surface
+	_launch_dust.draw_pass_1 = dust_mesh
+	add_child(_launch_dust)
 
 func _get_node_mesh_bounds(root: Node3D) -> AABB:
 	var merged := AABB()
@@ -905,7 +1037,7 @@ func _tasks_for_phase() -> Array[Dictionary]:
 	return tasks
 
 func _update_marker_target() -> void:
-	if mission_phase == 6:
+	if mission_phase == 6 or _launch_started:
 		_marker.visible = false
 		return
 	_marker.visible = true
@@ -967,7 +1099,7 @@ func _update_hud() -> void:
 	_mission_clock_label.text = "%02d:%02d  /  SURFACE TIME" % [int(mission_seconds / 60.0), int(fmod(mission_seconds, 60.0))]
 	_update_interaction_prompt()
 	_refresh_inventory()
-	if mission_phase == 6:
+	if mission_phase == 6 or _launch_started:
 		_distance_label.visible = false
 		_interaction_label.visible = false
 		_direction_arrow_label.visible = false
@@ -1036,23 +1168,88 @@ func _start_launch() -> void:
 	_launch_started = true
 	mission_phase = 5
 	_update_phase()
-	_commander_message("All repairs are complete. Strap in. We are starting the return launch now.")
-	_set_message("Engines ready. Returning to Earth.", Color(0.68, 0.96, 0.85))
+	_commander_message("All repairs are complete. Strap in. Flight computers are starting the launch checks.")
+	_set_message("Flight computers online. Launch sequence starting.", Color(0.68, 0.96, 0.85))
 	astronaut.velocity = Vector3.ZERO
 	astronaut.set_physics_process(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var follow_camera := astronaut.get_follow_camera()
+	if is_instance_valid(follow_camera):
+		_launch_camera_pivot = follow_camera.get_parent() as Node3D
+		if is_instance_valid(_launch_camera_pivot):
+			_launch_camera_rest_position = _launch_camera_pivot.position
 	_run_return_flight()
 
 func _run_return_flight() -> void:
-	var launch_player_position := astronaut.global_position + Vector3(0.0, 46.0, 0.0)
-	var launch_ship_height := ship_root.position.y + 46.0
-	var ascent := create_tween()
-	ascent.set_parallel(true)
-	ascent.tween_property(astronaut, "global_position", launch_player_position, 5.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	ascent.tween_property(ship_root, "position:y", launch_ship_height, 5.5).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	await ascent.finished
+	var cabin_start := Transform3D.IDENTITY
+	if is_instance_valid(_shuttle_flight_attitude):
+		cabin_start = _shuttle_flight_attitude.global_transform.affine_inverse() * astronaut.global_transform
+	_commander_message("Cabin sealed. The ship is rotating to its vertical launch position.")
+	_set_message("Positioning the shuttle for ascent.", Color(0.72, 0.9, 0.88))
+	await _raise_shuttle_for_launch(cabin_start)
+	for count in [5, 4, 3, 2, 1]:
+		_commander_message("T minus %d. Cabin pressure and navigation are stable." % count)
+		_set_message("T − %02d  /  CABIN SEALED" % count, Color(0.78, 0.92, 0.86))
+		await get_tree().create_timer(1.0).timeout
+	_commander_message("Main engines ignited. Hold-down is released on my mark.")
+	_set_message("Main engines ignited. Preparing for liftoff.", Color(0.77, 0.91, 1.0))
+	_launch_shake_strength = 0.035
+	_launch_engines_active = true
+	if is_instance_valid(_launch_dust):
+		_launch_dust.restart()
+		_launch_dust.emitting = true
+	for flame in _launch_flames:
+		flame.visible = true
+	await get_tree().create_timer(1.0).timeout
+	_commander_message("Liftoff. The landing gear is clear. Beginning the gravity turn.")
+	_set_message("Liftoff. Accelerating into the return orbit.", Color(0.65, 0.91, 1.0))
+	var earth_direction := Vector3.ZERO
+	if is_instance_valid(_earth):
+		earth_direction = _earth.global_position - ship_position
+		earth_direction.y = 0.0
+	if earth_direction.length_squared() < 0.01:
+		earth_direction = Vector3(0.0, 0.0, -1.0)
+	earth_direction = earth_direction.normalized()
+	var earth_yaw := atan2(-earth_direction.x, -earth_direction.z)
+	var ship_start := ship_root.position
+	var astronaut_start := astronaut.global_transform
+	var ascent_duration := 10.0
+	var climb_height := 250.0
+	var downrange_distance := 100.0
+	var elapsed := 0.0
+	var last_altitude_step := -1
+	while elapsed < ascent_duration:
+		await get_tree().process_frame
+		var frame_delta := maxf(get_process_delta_time(), 0.001)
+		elapsed += frame_delta
+		var progress := clampf(elapsed / ascent_duration, 0.0, 1.0)
+		var acceleration_curve := progress * progress
+		var turn_amount := clampf((progress - 0.12) / 0.7, 0.0, 1.0)
+		var turn_progress := turn_amount * turn_amount * (3.0 - 2.0 * turn_amount)
+		var pitch := PI * 0.5 - 0.28 * turn_progress
+		var yaw := lerp_angle(0.0, earth_yaw, turn_progress)
+		_set_launch_attitude(pitch, yaw)
+		var flight_offset := Vector3.UP * (climb_height * acceleration_curve) + earth_direction * (downrange_distance * acceleration_curve)
+		ship_root.position = ship_start + flight_offset
+		if is_instance_valid(_shuttle_flight_attitude):
+			astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
+		else:
+			astronaut.global_position = astronaut_start.origin + flight_offset
+		_launch_shake_strength = 0.018 + 0.105 * (1.0 - progress)
+		var altitude_step := int(climb_height * progress / 25.0)
+		if progress < 0.92 and altitude_step != last_altitude_step:
+			last_altitude_step = altitude_step
+			_set_message("Powered ascent  /  %03d M" % int(climb_height * acceleration_curve), Color(0.65, 0.91, 1.0))
+	_set_launch_attitude(PI * 0.5 - 0.28, earth_yaw)
+	_launch_shake_strength = 0.0
+	_launch_engines_active = false
+	for flame in _launch_flames:
+		flame.visible = false
+	if is_instance_valid(_launch_engine_light):
+		_launch_engine_light.light_energy = 0.0
+	_commander_message("Main engine cutoff. Orbit reached; the ship is coasting toward Earth.")
+	_set_message("Main engine cutoff. Coasting to Earth.", Color(0.62, 0.88, 1.0))
 	_commander_message("Orbit reached. The return ship is on course for Earth.")
-	_set_message("Orbit reached. Earth transfer is under way.", Color(0.62, 0.88, 1.0))
 	_phase_detail.text = "Earth is in sight. Re-entry guidance is active."
 	if is_instance_valid(_earth):
 		var camera: Camera3D = astronaut.get_follow_camera()
@@ -1076,6 +1273,21 @@ func _run_return_flight() -> void:
 	_award(500, "Safe return to Earth")
 	_update_phase()
 	_complete_panel.visible = true
+
+func _raise_shuttle_for_launch(cabin_start: Transform3D) -> void:
+	if not is_instance_valid(_shuttle_flight_attitude):
+		return
+	var duration := 2.4
+	var elapsed := 0.0
+	while elapsed < duration:
+		await get_tree().process_frame
+		elapsed += maxf(get_process_delta_time(), 0.001)
+		var progress := clampf(elapsed / duration, 0.0, 1.0)
+		var eased := progress * progress * (3.0 - 2.0 * progress)
+		_set_launch_attitude(PI * 0.5 * eased, 0.0)
+		astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
+	_set_launch_attitude(PI * 0.5, 0.0)
+	astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
 
 func _commander_message(message: String) -> void:
 	if _command_label == null:

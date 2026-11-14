@@ -40,6 +40,8 @@ Godot imports the included image, video, and 3D model files on first open. It cr
 
 The task list, compass arrow, repair credits, and suit fuel stay on screen. The commander sends a new instruction when each mission step changes. Press **H** for another hint or **C** to review recent messages.
 
+At launch, the shuttle pivots upright, runs a five-second countdown, and lights three engine plumes. A brief camera rumble and low-gravity lunar dust accompany a slow liftoff, accelerating ascent, and gravity turn toward Earth. The surface effect is dust rather than atmospheric smoke, since the Moon has no air.
+
 ## Lunar world
 
 Terrain streams in around the astronaut as they travel. Each region is generated from its map coordinates, so revisiting an area gives the same terrain. Near regions use more detail; distant regions use fewer mesh points. Godot culls 3D objects outside the camera view, and the game frees terrain chunks outside the active area.
@@ -71,3 +73,4 @@ Earth is placed about 650 game units from the starting site and rendered at a ra
 
 - NASA Goddard Space Flight Center, [Moon 3D Models for Web, AR, and Animation](https://svs.gsfc.nasa.gov/14959/).
 - RenderX, [Moon model on Sketchfab](https://sketchfab.com/3d-models/moon-26cc0b7878bb4d919b68e2be399db466). The downloadable mesh is not included in this project.
+- Imagine Science, [Space Shuttle Launch realistic animation | 3D Animation | ISS Docking](https://www.youtube.com/watch?v=Y9J4tEqZAjw&t=68s), used as the launch-sequence reference.
