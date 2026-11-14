@@ -103,11 +103,13 @@ func _build_visual() -> void:
 	var bounds := model.get_aabb()
 	var target_height := 2.15
 	var fit_scale := target_height / maxf(bounds.size.y, 0.1)
-	_visual_base_y = -bounds.position.y * fit_scale
+	# The supplied OBJ is authored upside down: its maximum local Y is the
+	# foot plane. Flip it over and use that edge as the ground contact point.
+	_visual_base_y = bounds.end.y * fit_scale
 	_visual_root = Node3D.new()
 	_visual_root.name = "Alien visual"
 	_visual_root.position.y = _visual_base_y
-	_visual_root.rotation.y = PI
+	_visual_root.rotation = Vector3(PI, PI, 0.0)
 	add_child(_visual_root)
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "Alien mesh"
