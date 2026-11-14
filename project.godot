@@ -17,8 +17,16 @@ config/icon="res://icon.svg"
 
 [display]
 
+window/size/viewport_width=1440
+window/size/viewport_height=900
+window/size/window_width_override=1440
+window/size/window_height_override=900
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+
+[dotnet]
+
+project/assembly_name="Gravity"
 
 [physics]
 
@@ -27,3 +35,4 @@ window/stretch/aspect="expand"
 [rendering]
 
 rendering_device/driver.windows="d3d12"
+environment/defaults/default_clear_color=Color(0.006, 0.009, 0.019, 1)
