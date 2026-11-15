@@ -99,7 +99,7 @@ var _marker: Node3D
 var _marker_target := Vector3.ZERO
 var _marker_label: Label3D
 var _marker_arrow_root: Node3D
-var _direction_arrow_label: Label
+var _direction_arrow_root: Node2D
 var _arrow_clock := 0.0
 var _earth: MeshInstance3D
 var _earth_halo: OmniLight3D
@@ -618,17 +618,25 @@ func _build_hud() -> void:
 	_phase_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	objective_copy.add_child(_phase_detail)
 
-	_direction_arrow_label = _label("↑", 38, Color(0.42, 1.0, 0.88))
-	_direction_arrow_label.anchor_left = 0.5
-	_direction_arrow_label.anchor_right = 0.5
-	_direction_arrow_label.offset_left = -31.0
-	_direction_arrow_label.offset_top = 108.0
-	_direction_arrow_label.offset_right = 31.0
-	_direction_arrow_label.offset_bottom = 151.0
-	_direction_arrow_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_direction_arrow_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_direction_arrow_label.resized.connect(func(): _direction_arrow_label.pivot_offset = _direction_arrow_label.size * 0.5)
-	root.add_child(_direction_arrow_label)
+	_direction_arrow_root = Node2D.new()
+	_direction_arrow_root.name = "Waypoint arrow"
+	_direction_arrow_root.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5, 129.0)
+	var arrow_points := PackedVector2Array([
+		Vector2(0.0, -22.0), Vector2(17.0, -2.0), Vector2(7.0, -2.0),
+		Vector2(7.0, 18.0), Vector2(-7.0, 18.0), Vector2(-7.0, -2.0), Vector2(-17.0, -2.0)
+	])
+	var arrow_outline := Polygon2D.new()
+	arrow_outline.name = "Arrow outline"
+	arrow_outline.polygon = arrow_points
+	arrow_outline.color = Color(0.012, 0.065, 0.075, 0.96)
+	arrow_outline.scale = Vector2(1.28, 1.22)
+	_direction_arrow_root.add_child(arrow_outline)
+	var arrow_fill := Polygon2D.new()
+	arrow_fill.name = "Arrow fill"
+	arrow_fill.polygon = arrow_points
+	arrow_fill.color = Color(0.42, 1.0, 0.88)
+	_direction_arrow_root.add_child(arrow_fill)
+	root.add_child(_direction_arrow_root)
 
 	_distance_label = _label("000 M  •  FOLLOW THE MARKER", 15, Color(0.76, 0.92, 0.87))
 	_distance_label.anchor_left = 0.5
@@ -1281,16 +1289,13 @@ func _update_hud() -> void:
 	var camera_yaw: float = astronaut.get_camera_yaw()
 	var camera_forward := Vector3(-sin(camera_yaw), 0.0, -cos(camera_yaw))
 	var bearing := atan2(camera_forward.cross(direction).y, camera_forward.dot(direction))
-	_direction_arrow_label.text = _arrow_for_bearing(bearing)
 	var arrow_side_shift := -sin(bearing) * 76.0
 	var arrow_bounce := absf(sin(_arrow_clock * 5.2)) * 11.0
 	var arrow_pulse := 1.0 + (0.5 + 0.5 * sin(_arrow_clock * 5.2)) * 0.16
 	var behind_shift := 9.0 if absf(bearing) > 2.35 else 0.0
-	_direction_arrow_label.offset_left = -31.0 + arrow_side_shift
-	_direction_arrow_label.offset_right = 31.0 + arrow_side_shift
-	_direction_arrow_label.offset_top = 108.0 + behind_shift - arrow_bounce
-	_direction_arrow_label.offset_bottom = 151.0 + behind_shift - arrow_bounce
-	_direction_arrow_label.scale = Vector2.ONE * arrow_pulse
+	_direction_arrow_root.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 + arrow_side_shift, 129.0 + behind_shift - arrow_bounce)
+	_direction_arrow_root.rotation = -bearing
+	_direction_arrow_root.scale = Vector2.ONE * arrow_pulse
 	_distance_label.text = "%03d M  •  %s" % [int(horizontal_distance), "WAYPOINT" if horizontal_distance < 4.0 else "FOLLOW THE MARKER"]
 	_boost_bar.value = astronaut.boost_fuel
 	_mission_clock_label.text = "%02d:%02d  /  SURFACE TIME" % [int(mission_seconds / 60.0), int(fmod(mission_seconds, 60.0))]
@@ -1299,11 +1304,11 @@ func _update_hud() -> void:
 	if mission_phase == 6 or _launch_started:
 		_distance_label.visible = false
 		_interaction_label.visible = false
-		_direction_arrow_label.visible = false
+		_direction_arrow_root.visible = false
 	else:
 		_distance_label.visible = true
 		_interaction_label.visible = true
-		_direction_arrow_label.visible = true
+		_direction_arrow_root.visible = true
 
 func _update_flight_hud() -> void:
 	if not is_instance_valid(_earth) or not is_instance_valid(ship_root) or _flight_range_label == null:
@@ -1331,18 +1336,6 @@ func _update_flight_hud() -> void:
 	else:
 		_flight_hazard_label.text = "ASTEROID TRACKING ONLINE\nNO IMMEDIATE THREATS"
 		_flight_hazard_label.add_theme_color_override("font_color", Color(0.55, 0.9, 0.7))
-
-func _arrow_for_bearing(bearing: float) -> String:
-	var angle := absf(bearing)
-	if angle < 0.35:
-		return "↑"
-	if angle < 1.05:
-		return "↖" if bearing > 0.0 else "↗"
-	if angle < 1.95:
-		return "←" if bearing > 0.0 else "→"
-	if angle < 2.6:
-		return "↙" if bearing > 0.0 else "↘"
-	return "↓"
 
 func _update_interaction_prompt() -> void:
 	var text := ""
