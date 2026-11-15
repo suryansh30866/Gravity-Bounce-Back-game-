@@ -339,11 +339,17 @@ func _new_game_button() -> Button:
 	button.add_theme_stylebox_override("pressed", _button_style(Color(0.90, 0.94, 0.91, 0.94), Color(0.23, 0.38, 0.35, 0.50)))
 	button.add_theme_stylebox_override("focus", _button_style(Color(0.99, 0.98, 0.96, 0.90), Color(0.23, 0.38, 0.35, 0.50)))
 	button.resized.connect(func(): button.pivot_offset = button.size * 0.5)
-	button.mouse_entered.connect(func(): _animate_button_scale(button, Vector2(1.025, 1.025), 0.18))
+	button.mouse_entered.connect(func():
+		_animate_button_scale(button, Vector2(1.025, 1.025), 0.18)
+		SFX.play_sfx("ui_hover", -18.0)
+	)
 	button.mouse_exited.connect(func(): _animate_button_scale(button, Vector2.ONE, 0.18))
 	button.button_down.connect(func(): _animate_button_scale(button, Vector2(0.985, 0.985), 0.08))
 	button.button_up.connect(func(): _animate_button_scale(button, Vector2(1.025, 1.025), 0.12))
-	button.pressed.connect(_start_game)
+	button.pressed.connect(func():
+		SFX.play_sfx("ui_click", -10.0)
+		_start_game()
+	)
 	return button
 
 func _animate_button_scale(button: Button, target: Vector2, duration: float) -> void:

@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://dn8djnn8f32kd"
+path="res://.godot/imported/Spaceship start and travelling sound.mp3-7f08105ed256fc8a0ebd463202010df0.mp3str"
+
+[deps]
+
+source_file="res://assets/audio/sci-fi_sounds/Spaceship start and travelling sound.mp3"
+dest_files=["res://.godot/imported/Spaceship start and travelling sound.mp3-7f08105ed256fc8a0ebd463202010df0.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

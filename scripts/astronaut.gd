@@ -63,6 +63,7 @@ var _knockback_cooldown := 0.0
 var _step_phase := 0.0
 var _step_amount := 0.0
 var _walking_materials: Array[ShaderMaterial] = []
+var _boost_sfx_timer := 0.0
 
 func _ready() -> void:
 	name = "Astronaut"
@@ -73,6 +74,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	mission_time += delta
+	_boost_sfx_timer = maxf(0.0, _boost_sfx_timer - delta)
 	_knockback_cooldown = maxf(0.0, _knockback_cooldown - delta)
 	var yaw := _camera_pivot.rotation.y
 	var forward := Vector3(-sin(yaw), 0.0, -cos(yaw))
@@ -102,9 +104,13 @@ func _physics_process(delta: float) -> void:
 		if boosting:
 			velocity.y = minf(7.2, velocity.y + 4.2 * delta)
 			boost_fuel = maxf(0.0, boost_fuel - _fuel_burn_rate * delta)
+			if _boost_sfx_timer <= 0.0:
+				SFX.play_sfx("boost", -16.0)
+				_boost_sfx_timer = 0.65
 	if Input.is_key_pressed(KEY_SPACE) and grounded:
 		velocity.y = 5.0
 		boost_fuel = maxf(0.0, boost_fuel - 5.0)
+		SFX.play_sfx("jump", -10.0)
 
 	move_and_slide()
 	var surface := get_parent().get_node_or_null("Lunar geology")
@@ -147,6 +153,17 @@ func set_camera_yaw(value: float) -> void:
 func get_follow_camera() -> Camera3D:
 	return _camera
 
+func enter_cockpit_chase_view() -> void:
+	if is_instance_valid(_visuals):
+		_visuals.visible = false
+	_camera_pivot.position = Vector3(0.0, 1.55, 0.0)
+	_camera_pivot.rotation = Vector3.ZERO
+	_camera.position = Vector3(0.0, 5.2, 18.0)
+	_camera.rotation = Vector3(-atan2(5.2, 18.0), 0.0, 0.0)
+	_camera.fov = 72.0
+	_camera.set_cull_mask_value(2, true)
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
 func apply_knockback(from_position: Vector3, horizontal_force := 8.6, upward_force := 2.7) -> bool:
 	if _knockback_cooldown > 0.0:
 		return false
@@ -160,6 +177,7 @@ func apply_knockback(from_position: Vector3, horizontal_force := 8.6, upward_for
 	velocity.z = away.z * horizontal_force
 	velocity.y = maxf(velocity.y, upward_force)
 	_knockback_cooldown = KNOCKBACK_COOLDOWN
+	SFX.play_sfx("knockback", -5.0)
 	return true
 
 func _build_body() -> void:
@@ -215,7 +233,7 @@ func _build_camera() -> void:
 	_camera.rotation.x = -atan2(1.65, 8.2)
 	_camera.fov = 70.0
 	_camera.near = 0.08
-	_camera.far = 1900.0
+	_camera.far = 18000.0
 	_camera.current = true
 	_camera_pivot.add_child(_camera)
 

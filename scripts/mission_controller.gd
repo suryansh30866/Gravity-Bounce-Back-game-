@@ -11,6 +11,7 @@ const PHASE_TITLES := [
 	"You are home",
 ]
 const SPACE_SHUTTLE_MODEL_PATH := "res://assets/vehicles/space_shuttle.glb"
+const COCKPIT_SEAT_LOCAL := Vector3(0.0, 0.0, 4.1)
 const PHASE_DETAILS := [
 	"Reach the damaged ship. Follow the blue marker.",
 	"Find every glowing part and press E to pick it up.",
@@ -26,7 +27,7 @@ const HINTS := [
 	"Use the three cable connectors at the red service pads. Start at Power, then Guidance, then Radio.",
 	"Go to each red service pad and install the matching part from your pack. The ship will light up when a system is fixed.",
 	"The engine pads are near the back of the ship. Install the thruster nozzle and coolant pack.",
-	"The final marker leads to the cockpit. Press E when you are close. The commander will guide the flight home.",
+	"The final marker leads to the cockpit. Press E when close. Steer with WASD or the arrows and avoid the asteroids.",
 	"You made it home. Press R to play again or Esc to return to the menu.",
 ]
 
@@ -70,6 +71,10 @@ const REPAIR_SPECS := [
 	{"id": "coolant_pack", "name": "Coolant system", "item": "coolant_pack", "offset": Vector2(2.5, 5.4), "phase": 4},
 ]
 const MAX_CARRY := 8
+const EARTH_BLACKOUT_SURFACE_RANGE := 5000.0
+const EARTH_RADIUS := 130.0
+const EARTH_BLACKOUT_RANGE := EARTH_BLACKOUT_SURFACE_RANGE + EARTH_RADIUS
+const FLIGHT_SPEED := 60.0
 
 var terrain: LunarTerrain
 var astronaut: LunarAstronaut
@@ -98,6 +103,7 @@ var _direction_arrow_label: Label
 var _arrow_clock := 0.0
 var _earth: MeshInstance3D
 var _earth_halo: OmniLight3D
+var _moon_orbit_visual: MeshInstance3D
 var _launch_started := false
 var _shuttle_flight_pivot: Node3D
 var _shuttle_flight_attitude: Node3D
@@ -109,6 +115,14 @@ var _launch_camera_rest_position := Vector3.ZERO
 var _launch_shake_strength := 0.0
 var _launch_effect_clock := 0.0
 var _launch_engines_active := false
+var _flight_crashed := false
+var _flight_elapsed := 0.0
+var _flight_speed := 0.0
+var _flight_route_distance := 0.0
+var _flight_route_start_distance := 0.0
+var _flight_yaw := 0.0
+var _flight_pitch := 0.0
+var _flight_asteroids: Array[Dictionary] = []
 var _stream_clock := 0.0
 var _command_log: Array[String] = []
 
@@ -133,20 +147,34 @@ var _boost_bar: ProgressBar
 var _mission_clock_label: Label
 var _progress_labels: Array[Label] = []
 var _complete_panel: PanelContainer
+var _console_font: Font
 var _toast_timer := 0.0
+var _arrival_overlay: CanvasLayer
+var _arrival_video: VideoStreamPlayer
+var _arrival_fade: ColorRect
+var _flight_ui: CanvasLayer
+var _flight_range_label: Label
+var _flight_speed_label: Label
+var _flight_attitude_label: Label
+var _flight_status_label: Label
+var _flight_hazard_label: Label
+var _flight_progress: ProgressBar
+var _crash_panel: PanelContainer
 
-func configure(terrain_ref: LunarTerrain, player: LunarAstronaut, habitat: Vector3, return_ship: Vector3, earth: MeshInstance3D, earth_halo: OmniLight3D) -> void:
+func configure(terrain_ref: LunarTerrain, player: LunarAstronaut, habitat: Vector3, return_ship: Vector3, earth: MeshInstance3D, earth_halo: OmniLight3D, moon_visual: MeshInstance3D) -> void:
 	terrain = terrain_ref
 	astronaut = player
 	habitat_position = habitat
 	ship_position = return_ship
 	_earth = earth
 	_earth_halo = earth_halo
+	_moon_orbit_visual = moon_visual
 	_build_return_ship()
 	_create_pickups()
 	_create_repair_points()
 	_build_world_marker()
 	_build_hud()
+	_build_arrival_overlay()
 	_update_phase()
 	_commander_message("Welcome back, Commander Hale. Reach the damaged return ship and I will guide you through every repair.")
 	_set_message("Your return ship is damaged. Mission Control is ready to help.", Color(0.72, 0.92, 0.87))
@@ -157,7 +185,7 @@ func _process(delta: float) -> void:
 	_update_launch_effects(delta)
 	mission_seconds += delta
 	_stream_clock += delta
-	if _stream_clock >= 0.5:
+	if not _launch_started and _stream_clock >= 0.5:
 		_stream_clock = 0.0
 		terrain.stream_around(astronaut.global_position)
 	if _toast_timer > 0.0:
@@ -176,6 +204,14 @@ func _process(delta: float) -> void:
 			_marker_arrow_root.scale = Vector3.ONE * arrow_scale
 	_update_mission_progress()
 	_update_hud()
+	if _launch_started and not _flight_crashed:
+		_update_flight_hud()
+		for hazard in _flight_asteroids:
+			var asteroid := hazard.get("node") as Node3D
+			if is_instance_valid(asteroid):
+				asteroid.rotate_y(delta * 0.12)
+	if _flight_crashed and Input.is_key_pressed(KEY_R):
+		get_tree().reload_current_scene()
 	if mission_phase == 6 and Input.is_key_pressed(KEY_R):
 		get_tree().reload_current_scene()
 
@@ -250,6 +286,8 @@ func _build_return_ship() -> void:
 	_add_box("Missing radio array socket", ship_position + Vector3(0.0, 4.35, 0.28), Vector3(0.84, 0.1, 0.15), alert, ship_root)
 	_add_sphere("Broken power indicator", ship_position + Vector3(0.0, 4.15, -0.94), Vector3(0.16, 0.16, 0.08), alert, ship_root)
 	_add_label("RETURN SHIP  /  REPAIR REQUIRED", ship_position + Vector3(0.0, 6.3, 0.0), Color(0.9, 0.78, 0.55), ship_root)
+	for mesh_instance in procedural_hull.find_children("*", "MeshInstance3D", true, false):
+		mesh_instance.layers = 2
 	_install_space_shuttle(procedural_hull)
 	_build_lunar_dust()
 
@@ -289,6 +327,7 @@ func _install_space_shuttle(procedural_fallback: Node3D) -> void:
 	for mesh_instance in shuttle.find_children("*", "MeshInstance3D", true, false):
 		mesh_instance.lod_bias = 1.4
 		mesh_instance.visibility_range_end = 500.0
+		mesh_instance.layers = 2
 	_build_engine_plumes(bounds, center, fit_scale)
 	procedural_fallback.visible = false
 
@@ -509,6 +548,7 @@ func _build_world_marker() -> void:
 	ring_mesh.ring_segments = 22
 	ring.mesh = ring_mesh
 	ring.rotation_degrees.x = 90.0
+	ring.position.y = 0.12
 	ring.material_override = _emissive(Color(0.23, 0.95, 0.88))
 	_marker.add_child(ring)
 	_marker_arrow_root = Node3D.new()
@@ -528,9 +568,9 @@ func _build_world_marker() -> void:
 	var stem_mesh := CylinderMesh.new()
 	stem_mesh.top_radius = 0.06
 	stem_mesh.bottom_radius = 0.1
-	stem_mesh.height = 1.0
+	stem_mesh.height = 1.25
 	stem.mesh = stem_mesh
-	stem.position.y = 0.55
+	stem.position.y = 0.35
 	stem.material_override = _emissive(Color(0.18, 0.68, 0.7))
 	_marker_arrow_root.add_child(stem)
 	_marker_label = _label_3d("NEXT TASK", 32, Color(0.66, 0.96, 0.89))
@@ -539,6 +579,9 @@ func _build_world_marker() -> void:
 	add_child(_marker)
 
 func _build_hud() -> void:
+	var mono := SystemFont.new()
+	mono.font_names = PackedStringArray(["Consolas", "Courier New", "monospace"])
+	_console_font = mono
 	_ui = CanvasLayer.new()
 	_ui.layer = 3
 	add_child(_ui)
@@ -654,8 +697,7 @@ func _build_hud() -> void:
 	inventory_copy.add_child(_credits_label)
 
 	var controls_card := _panel(Color(0.012, 0.027, 0.04, 0.77), Color(0.36, 0.62, 0.64, 0.3))
-	controls_card.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	controls_card.position = Vector2(24.0, -107.0)
+	controls_card.position = Vector2(24.0, 415.0)
 	controls_card.size = Vector2(336.0, 80.0)
 	root.add_child(controls_card)
 	var controls := _label("W A S D  Move    •    Mouse  Look\nSpace  Jump    •    Shift  Suit thrust\nE  Use / pick up    •    I  Inventory", 9, Color(0.65, 0.76, 0.74))
@@ -665,9 +707,9 @@ func _build_hud() -> void:
 	controls_card.add_child(controls)
 
 	var suit_card := _panel(Color(0.012, 0.027, 0.04, 0.82), Color(0.36, 0.62, 0.64, 0.34))
-	suit_card.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	suit_card.position = Vector2(-252.0, -106.0)
-	suit_card.size = Vector2(228.0, 79.0)
+	suit_card.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	suit_card.position = Vector2(-326.0, 426.0)
+	suit_card.size = Vector2(302.0, 79.0)
 	root.add_child(suit_card)
 	var suit_copy := VBoxContainer.new()
 	suit_copy.add_theme_constant_override("separation", 3)
@@ -676,7 +718,7 @@ func _build_hud() -> void:
 	suit_copy.add_child(suit_title)
 	_boost_bar = ProgressBar.new()
 	_boost_bar.max_value = 100.0
-	_boost_bar.custom_minimum_size = Vector2(190.0, 10.0)
+	_boost_bar.custom_minimum_size = Vector2(250.0, 10.0)
 	_boost_bar.show_percentage = false
 	_boost_bar.add_theme_stylebox_override("background", _bar_style(Color(0.06, 0.12, 0.14)))
 	_boost_bar.add_theme_stylebox_override("fill", _bar_style(Color(0.31, 0.88, 0.8)))
@@ -731,6 +773,160 @@ func _build_hud() -> void:
 	_build_inventory_panel(root)
 	_build_command_log(root)
 	_build_completion_panel(root)
+	_build_flight_hud()
+
+func _build_flight_hud() -> void:
+	_flight_ui = CanvasLayer.new()
+	_flight_ui.name = "Apollo flight console"
+	_flight_ui.layer = 4
+	_flight_ui.visible = false
+	add_child(_flight_ui)
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_flight_ui.add_child(root)
+	var amber := Color(0.96, 0.72, 0.36)
+	var green := Color(0.55, 0.9, 0.7)
+	var dim := Color(0.55, 0.65, 0.59)
+	var top := _panel(Color(0.012, 0.018, 0.018, 0.92), Color(0.78, 0.57, 0.29, 0.86))
+	top.anchor_left = 0.0
+	top.anchor_right = 1.0
+	top.offset_left = 22.0
+	top.offset_top = 18.0
+	top.offset_right = -22.0
+	top.offset_bottom = 82.0
+	root.add_child(top)
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 22)
+	top.add_child(top_row)
+	var brand := _label("GRAVITY  /  APOLLO RETURN FLIGHT", 13, amber)
+	brand.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top_row.add_child(brand)
+	var mission_tag := _label("TRANQUILLITATIS  /  RETURN TRAJECTORY", 9, dim)
+	mission_tag.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mission_tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top_row.add_child(mission_tag)
+	_flight_status_label = _label("PREFLIGHT CHECKS", 10, green)
+	_flight_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_flight_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top_row.add_child(_flight_status_label)
+
+	var nav_card := _panel(Color(0.012, 0.018, 0.018, 0.89), Color(0.48, 0.66, 0.48, 0.74))
+	nav_card.position = Vector2(22.0, 100.0)
+	nav_card.size = Vector2(284.0, 174.0)
+	root.add_child(nav_card)
+	var nav_copy := VBoxContainer.new()
+	nav_copy.add_theme_constant_override("separation", 8)
+	nav_card.add_child(nav_copy)
+	var nav_title := _label("NAVIGATION  /  TELEMETRY", 9, green)
+	nav_copy.add_child(nav_title)
+	_flight_speed_label = _label("VELOCITY   000.0 M/S", 12, amber)
+	nav_copy.add_child(_flight_speed_label)
+	_flight_attitude_label = _label("PITCH  +00°   HEADING  000°", 10, Color(0.82, 0.85, 0.68))
+	_flight_attitude_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	nav_copy.add_child(_flight_attitude_label)
+	var range_title := _label("EARTH INTERCEPT RANGE", 8, dim)
+	nav_copy.add_child(range_title)
+	_flight_range_label = _label("00000 M  /  TARGET 5000 M", 10, green)
+	nav_copy.add_child(_flight_range_label)
+	var telemetry_rule := _label("────────  GUIDANCE COMPUTER  ────────", 8, dim)
+	nav_copy.add_child(telemetry_rule)
+
+	var hazard_card := _panel(Color(0.012, 0.018, 0.018, 0.89), Color(0.78, 0.57, 0.29, 0.74))
+	hazard_card.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	hazard_card.position = Vector2(-310.0, 100.0)
+	hazard_card.size = Vector2(288.0, 174.0)
+	root.add_child(hazard_card)
+	var hazard_copy := VBoxContainer.new()
+	hazard_copy.add_theme_constant_override("separation", 8)
+	hazard_card.add_child(hazard_copy)
+	var hazard_title := _label("FLIGHT DIRECTOR  /  HAZARDS", 9, amber)
+	hazard_copy.add_child(hazard_title)
+	_flight_hazard_label = _label("ASTEROID TRACKING ONLINE\nNO IMMEDIATE THREATS", 10, green)
+	_flight_hazard_label.custom_minimum_size.y = 52.0
+	_flight_hazard_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hazard_copy.add_child(_flight_hazard_label)
+	var hazard_hint := _label("KEEP CLEAR OF ROCKS\nRANGE GATES  /  500 M", 8, dim)
+	hazard_copy.add_child(hazard_hint)
+
+	var bottom := _panel(Color(0.012, 0.018, 0.018, 0.94), Color(0.78, 0.57, 0.29, 0.82))
+	bottom.anchor_left = 0.0
+	bottom.anchor_right = 1.0
+	bottom.anchor_top = 1.0
+	bottom.anchor_bottom = 1.0
+	bottom.offset_left = 22.0
+	bottom.offset_top = -92.0
+	bottom.offset_right = -22.0
+	bottom.offset_bottom = -18.0
+	root.add_child(bottom)
+	var bottom_row := HBoxContainer.new()
+	bottom_row.add_theme_constant_override("separation", 16)
+	bottom.add_child(bottom_row)
+	var controls := _label("W / ↑  PITCH UP     S / ↓  PITCH DOWN\nA / ←  YAW LEFT     D / →  YAW RIGHT", 8, amber)
+	controls.custom_minimum_size.x = 288.0
+	controls.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bottom_row.add_child(controls)
+	var range_progress := ProgressBar.new()
+	range_progress.min_value = 0.0
+	range_progress.max_value = 1.0
+	range_progress.value = 0.0
+	range_progress.show_percentage = false
+	range_progress.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	range_progress.custom_minimum_size = Vector2(200.0, 14.0)
+	range_progress.add_theme_stylebox_override("background", _bar_style(Color(0.08, 0.1, 0.075)))
+	range_progress.add_theme_stylebox_override("fill", _bar_style(Color(0.61, 0.77, 0.43)))
+	_flight_progress = range_progress
+	bottom_row.add_child(range_progress)
+	var computer := _label("GUIDANCE  /  MANUAL OVERRIDE\nBLACKOUT AT 5.0 KM", 8, green)
+	computer.custom_minimum_size.x = 218.0
+	computer.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	computer.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	bottom_row.add_child(computer)
+
+func _build_arrival_overlay() -> void:
+	_arrival_overlay = CanvasLayer.new()
+	_arrival_overlay.name = "Earth arrival cutscene"
+	_arrival_overlay.layer = 20
+	add_child(_arrival_overlay)
+	_arrival_video = VideoStreamPlayer.new()
+	_arrival_video.name = "Earth coming video"
+	_arrival_video.stream = load("res://assets/earth_coming.ogv") as VideoStreamTheora
+	_arrival_video.expand = true
+	_arrival_video.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_arrival_video.visible = false
+	_arrival_video.volume = 1.0
+	_arrival_overlay.add_child(_arrival_video)
+	_arrival_fade = ColorRect.new()
+	_arrival_fade.name = "Black transition"
+	_arrival_fade.color = Color(0.0, 0.0, 0.0, 0.0)
+	_arrival_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_arrival_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_arrival_overlay.add_child(_arrival_fade)
+	_build_crash_panel()
+
+func _build_crash_panel() -> void:
+	_crash_panel = _panel(Color(0.012, 0.012, 0.01, 0.98), Color(0.96, 0.48, 0.27, 0.94))
+	_crash_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_crash_panel.offset_left = -280.0
+	_crash_panel.offset_top = -140.0
+	_crash_panel.offset_right = 280.0
+	_crash_panel.offset_bottom = 140.0
+	_crash_panel.visible = false
+	_arrival_overlay.add_child(_crash_panel)
+	var copy := VBoxContainer.new()
+	copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	copy.add_theme_constant_override("separation", 14)
+	_crash_panel.add_child(copy)
+	var title := _label("FLIGHT ABORT  /  IMPACT", 12, Color(1.0, 0.58, 0.34))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	copy.add_child(title)
+	var details := _label("ASTEROID COLLISION DETECTED\nRETURN VEHICLE LOST", 22, Color(0.92, 0.88, 0.75))
+	details.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	copy.add_child(details)
+	var retry := _label("R  RESTART MISSION     •     ESC  MAIN MENU", 9, Color(0.75, 0.8, 0.67))
+	retry.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	copy.add_child(retry)
 
 func _build_inventory_panel(root: Control) -> void:
 	_inventory_panel = _panel(Color(0.009, 0.02, 0.032, 0.96), Color(0.43, 0.83, 0.77, 0.8))
@@ -803,9 +999,6 @@ func _build_completion_panel(root: Control) -> void:
 	copy.add_child(overline)
 	var title := _label("Welcome back to Earth.", 29, Color(0.92, 0.93, 0.87))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var serif := SystemFont.new()
-	serif.font_names = PackedStringArray(["Georgia", "Times New Roman"])
-	title.add_theme_font_override("font", serif)
 	copy.add_child(title)
 	var details := _label("You recovered the parts, reconnected the ship, and brought the crew home.", 11, Color(0.67, 0.77, 0.74))
 	details.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -858,7 +1051,7 @@ func toggle_inventory() -> void:
 func request_hint() -> void:
 	var hint: String = str(HINTS[mini(mission_phase, HINTS.size() - 1)])
 	if mission_phase == 5 and _launch_started:
-		hint = "Stay on board. The commander is guiding the flight to Earth."
+		hint = "W / Up pitches up, S / Down pitches down, A / Left yaws left, and D / Right yaws right. Avoid asteroids."
 	_commander_message(hint)
 	_set_message("Hint: " + hint, Color(0.74, 0.88, 0.78))
 
@@ -881,6 +1074,8 @@ func handle_menu() -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		return
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	SFX.stop_ambient()
+	SFX.stop_ship_travel()
 	get_tree().change_scene_to_file("res://scenes/home.tscn")
 
 func _collect_pickup(key: String) -> void:
@@ -892,6 +1087,7 @@ func _collect_pickup(key: String) -> void:
 		_set_message("Your pack is full. Install a part before collecting more.", Color(1.0, 0.65, 0.42))
 		return
 	inventory[item_id] = int(inventory.get(item_id, 0)) + 1
+	SFX.play_sfx("pickup", -8.0)
 	inventory_count += 1
 	var pickup: Node3D = _pickup_nodes[key]
 	pickup.queue_free()
@@ -919,6 +1115,7 @@ func _repair_active_system() -> void:
 		_set_message("You need a " + str(ITEM_NAMES[item_id]) + " for this repair.", Color(1.0, 0.65, 0.42))
 		return
 	inventory[item_id] = int(inventory[item_id]) - 1
+	SFX.play_sfx("repair", -7.0)
 	if int(inventory[item_id]) <= 0:
 		inventory.erase(item_id)
 	inventory_count = maxi(0, inventory_count - 1)
@@ -974,7 +1171,7 @@ func _update_phase() -> void:
 	_phase_title.text = PHASE_TITLES[mission_phase]
 	_phase_detail.text = PHASE_DETAILS[mission_phase]
 	if mission_phase == 5 and _launch_started:
-		_phase_detail.text = "Stay on board. Mission Control is guiding the return flight."
+		_phase_detail.text = "Steer with WASD or arrows. Avoid asteroids; blackout begins five kilometres above Earth."
 	_refresh_tasks()
 	_update_marker_target()
 	_refresh_all_repair_visuals()
@@ -1108,6 +1305,33 @@ func _update_hud() -> void:
 		_interaction_label.visible = true
 		_direction_arrow_label.visible = true
 
+func _update_flight_hud() -> void:
+	if not is_instance_valid(_earth) or not is_instance_valid(ship_root) or _flight_range_label == null:
+		return
+	var earth_distance := _flight_vehicle_position().distance_to(_earth.global_position)
+	var heading_degrees := int(round(rad_to_deg(fposmod(_flight_yaw, TAU))))
+	var pitch_degrees := int(round(rad_to_deg(_flight_pitch)))
+	_flight_range_label.text = "%05d M  /  SURFACE RANGE" % int(maxf(earth_distance - EARTH_RADIUS, 0.0))
+	_flight_speed_label.text = "VELOCITY   %05.1f M/S" % _flight_speed
+	_flight_attitude_label.text = "PITCH  %+03d°   HEADING  %03d°" % [pitch_degrees, heading_degrees]
+	var distance_to_cover := maxf(_flight_route_start_distance - EARTH_BLACKOUT_RANGE, 1.0)
+	_flight_progress.value = clampf(_flight_route_distance / distance_to_cover, 0.0, 1.0)
+	var nearest_hazard := INF
+	for hazard in _flight_asteroids:
+		var asteroid := hazard.get("node") as Node3D
+		if not is_instance_valid(asteroid):
+			continue
+		nearest_hazard = minf(nearest_hazard, _flight_vehicle_position().distance_to(asteroid.global_position))
+	if nearest_hazard < 300.0:
+		_flight_hazard_label.text = "COLLISION WARNING\nASTEROID  /  %03d M" % int(nearest_hazard)
+		_flight_hazard_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.29))
+	elif nearest_hazard < 750.0:
+		_flight_hazard_label.text = "CAUTION  /  ASTEROID\nRANGE  %03d M  •  MANEUVER" % int(nearest_hazard)
+		_flight_hazard_label.add_theme_color_override("font_color", Color(0.96, 0.72, 0.36))
+	else:
+		_flight_hazard_label.text = "ASTEROID TRACKING ONLINE\nNO IMMEDIATE THREATS"
+		_flight_hazard_label.add_theme_color_override("font_color", Color(0.55, 0.9, 0.7))
+
 func _arrow_for_bearing(bearing: float) -> String:
 	var angle := absf(bearing)
 	if angle < 0.35:
@@ -1166,13 +1390,32 @@ func _start_launch() -> void:
 	if _launch_started:
 		return
 	_launch_started = true
+	if is_instance_valid(_ui):
+		_ui.visible = false
+	if is_instance_valid(_flight_ui):
+		_flight_ui.visible = true
+	_flight_status_label.text = "PREFLIGHT  /  CABIN SEALED"
+	SFX.start_ship_travel()
 	mission_phase = 5
 	_update_phase()
 	_commander_message("All repairs are complete. Strap in. Flight computers are starting the launch checks.")
 	_set_message("Flight computers online. Launch sequence starting.", Color(0.68, 0.96, 0.85))
+	astronaut.enter_cockpit_chase_view()
 	astronaut.velocity = Vector3.ZERO
 	astronaut.set_physics_process(false)
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if is_instance_valid(_earth) and is_instance_valid(ship_root):
+		var earth_direction := (_earth.global_position - _flight_vehicle_position()).normalized()
+		_flight_yaw = atan2(-earth_direction.x, -earth_direction.z)
+	else:
+		_flight_yaw = 0.0
+	_flight_pitch = 0.0
+	_set_launch_attitude(0.0, _flight_yaw)
+	if is_instance_valid(_shuttle_flight_attitude):
+		var seat_pose := Transform3D(Basis(Vector3.UP, PI), COCKPIT_SEAT_LOCAL)
+		astronaut.global_transform = _shuttle_flight_attitude.global_transform * seat_pose
+	else:
+		astronaut.global_transform = Transform3D(Basis.IDENTITY, ship_position + Vector3(0.0, 3.0, -4.1))
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	var follow_camera := astronaut.get_follow_camera()
 	if is_instance_valid(follow_camera):
 		_launch_camera_pivot = follow_camera.get_parent() as Node3D
@@ -1184,15 +1427,20 @@ func _run_return_flight() -> void:
 	var cabin_start := Transform3D.IDENTITY
 	if is_instance_valid(_shuttle_flight_attitude):
 		cabin_start = _shuttle_flight_attitude.global_transform.affine_inverse() * astronaut.global_transform
-	_commander_message("Cabin sealed. The ship is rotating to its vertical launch position.")
-	_set_message("Positioning the shuttle for ascent.", Color(0.72, 0.9, 0.88))
-	await _raise_shuttle_for_launch(cabin_start)
+	_commander_message("Cabin sealed. Shuttle is level. Flight controls are live; stand by for liftoff.")
+	_set_message("Shuttle level  /  Flight controls active", Color(0.72, 0.9, 0.88))
 	for count in [5, 4, 3, 2, 1]:
+		_flight_status_label.text = "T MINUS %d  /  ALL SYSTEMS GO" % count
 		_commander_message("T minus %d. Cabin pressure and navigation are stable." % count)
 		_set_message("T − %02d  /  CABIN SEALED" % count, Color(0.78, 0.92, 0.86))
 		await get_tree().create_timer(1.0).timeout
+		if _flight_crashed:
+			return
 	_commander_message("Main engines ignited. Hold-down is released on my mark.")
+	if is_instance_valid(_moon_orbit_visual):
+		_moon_orbit_visual.visible = true
 	_set_message("Main engines ignited. Preparing for liftoff.", Color(0.77, 0.91, 1.0))
+	_flight_status_label.text = "ENGINE IGNITION  /  LUNAR LIFTOFF"
 	_launch_shake_strength = 0.035
 	_launch_engines_active = true
 	if is_instance_valid(_launch_dust):
@@ -1200,94 +1448,292 @@ func _run_return_flight() -> void:
 		_launch_dust.emitting = true
 	for flame in _launch_flames:
 		flame.visible = true
-	await get_tree().create_timer(1.0).timeout
-	_commander_message("Liftoff. The landing gear is clear. Beginning the gravity turn.")
-	_set_message("Liftoff. Accelerating into the return orbit.", Color(0.65, 0.91, 1.0))
-	var earth_direction := Vector3.ZERO
-	if is_instance_valid(_earth):
-		earth_direction = _earth.global_position - ship_position
-		earth_direction.y = 0.0
-	if earth_direction.length_squared() < 0.01:
-		earth_direction = Vector3(0.0, 0.0, -1.0)
-	earth_direction = earth_direction.normalized()
-	var earth_yaw := atan2(-earth_direction.x, -earth_direction.z)
-	var ship_start := ship_root.position
-	var astronaut_start := astronaut.global_transform
-	var ascent_duration := 10.0
-	var climb_height := 250.0
-	var downrange_distance := 100.0
-	var elapsed := 0.0
-	var last_altitude_step := -1
-	while elapsed < ascent_duration:
+	var lift_origin := ship_root.global_position
+	var lift_elapsed := 0.0
+	var lift_duration := 3.6
+	_flight_status_label.text = "HOLD-DOWN RELEASE  /  DUST PLUME"
+	_commander_message("Liftoff. Thrusters are lifting the vehicle; shuttle remains level.")
+	while lift_elapsed < lift_duration:
 		await get_tree().process_frame
+		lift_elapsed += maxf(get_process_delta_time(), 0.001)
+		var lift_progress := clampf(lift_elapsed / lift_duration, 0.0, 1.0)
+		var lift_eased := lift_progress * lift_progress * (3.0 - 2.0 * lift_progress)
+		ship_root.global_position = lift_origin + Vector3.UP * (24.0 * lift_eased)
+		_set_launch_attitude(0.0, _flight_yaw)
+		_set_astronaut_in_cabin(cabin_start)
+		_launch_shake_strength = 0.04 + 0.045 * (1.0 - lift_progress)
+		if _flight_crashed:
+			return
+	var earth_direction := Vector3(0.0, 0.0, -1.0)
+	if is_instance_valid(_earth):
+		earth_direction = _earth.global_position - _flight_vehicle_position()
+		earth_direction.y = 0.0
+		if earth_direction.length_squared() > 0.001:
+			earth_direction = earth_direction.normalized()
+	var horizontal_origin := ship_root.global_position
+	var horizontal_elapsed := 0.0
+	var horizontal_duration := 3.2
+	_flight_status_label.text = "LEVEL FLIGHT  /  THRUST BUILD-UP"
+	while horizontal_elapsed < horizontal_duration:
+		await get_tree().process_frame
+		horizontal_elapsed += maxf(get_process_delta_time(), 0.001)
+		var progress := clampf(horizontal_elapsed / horizontal_duration, 0.0, 1.0)
+		var eased := progress * progress * (3.0 - 2.0 * progress)
+		ship_root.global_position = horizontal_origin + Vector3.UP * 24.0 + earth_direction * (110.0 * eased)
+		_flight_speed = 20.0 * progress
+		_set_launch_attitude(0.0, _flight_yaw)
+		_set_astronaut_in_cabin(cabin_start)
+		_launch_shake_strength = 0.08 * (1.0 - progress)
+		if _flight_crashed:
+			return
+	_commander_message("Horizontal acceleration established. Gravity turn underway; pilot has manual control.")
+	_set_message("Manual flight controls active. Asteroids on scope.", Color(0.65, 0.91, 1.0))
+	_flight_status_label.text = "GRAVITY TURN  /  MANUAL OVERRIDE"
+	_flight_speed = 32.0
+	_flight_elapsed = 0.0
+	_flight_route_distance = 0.0
+	_flight_route_start_distance = _earth.global_position.distance_to(_flight_vehicle_position()) if is_instance_valid(_earth) else 0.0
+	var flight_origin := _flight_vehicle_position()
+	_spawn_flight_asteroids(flight_origin, _flight_yaw, _flight_pitch, _flight_speed)
+	var last_reported_range := int(_flight_route_start_distance / 250.0)
+	var guidance_assist := false
+	while is_instance_valid(_earth) and _flight_vehicle_position().distance_to(_earth.global_position) > EARTH_BLACKOUT_RANGE and _flight_elapsed < 105.0:
+		await get_tree().process_frame
+		if _flight_crashed:
+			return
 		var frame_delta := maxf(get_process_delta_time(), 0.001)
-		elapsed += frame_delta
-		var progress := clampf(elapsed / ascent_duration, 0.0, 1.0)
-		var acceleration_curve := progress * progress
-		var turn_amount := clampf((progress - 0.12) / 0.7, 0.0, 1.0)
-		var turn_progress := turn_amount * turn_amount * (3.0 - 2.0 * turn_amount)
-		var pitch := PI * 0.5 - 0.28 * turn_progress
-		var yaw := lerp_angle(0.0, earth_yaw, turn_progress)
-		_set_launch_attitude(pitch, yaw)
-		var flight_offset := Vector3.UP * (climb_height * acceleration_curve) + earth_direction * (downrange_distance * acceleration_curve)
-		ship_root.position = ship_start + flight_offset
-		if is_instance_valid(_shuttle_flight_attitude):
-			astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
+		_flight_elapsed += frame_delta
+		var earth_vector := _earth.global_position - _flight_vehicle_position()
+		var earth_distance := earth_vector.length()
+		if earth_distance <= EARTH_BLACKOUT_RANGE:
+			break
+		var route_direction := earth_vector / maxf(earth_distance, 0.001)
+		var target_yaw := atan2(-route_direction.x, -route_direction.z)
+		var target_pitch := atan2(route_direction.y, Vector2(route_direction.x, route_direction.z).length())
+		var steering := _read_flight_controls()
+		var control_authority := 1.0 if _flight_elapsed < 65.0 else clampf((105.0 - _flight_elapsed) / 40.0, 0.0, 1.0)
+		var gravity_turn := _liftoff_pitch_arc(_flight_elapsed)
+		_flight_yaw = rotate_toward(_flight_yaw, target_yaw + steering.x * 0.34 * control_authority, 1.25 * frame_delta)
+		_flight_pitch = move_toward(_flight_pitch, target_pitch + gravity_turn + steering.y * 0.24 * control_authority, 1.15 * frame_delta)
+		_flight_pitch = clampf(_flight_pitch, -0.3, 0.72)
+		_flight_speed = move_toward(_flight_speed, FLIGHT_SPEED, 7.0 * frame_delta)
+		_set_launch_attitude(_flight_pitch, _flight_yaw)
+		var direction := Vector3(-sin(_flight_yaw) * cos(_flight_pitch), sin(_flight_pitch), -cos(_flight_yaw) * cos(_flight_pitch)).normalized()
+		ship_root.global_position += direction * _flight_speed * frame_delta
+		_flight_route_distance += _flight_speed * frame_delta
+		_set_astronaut_in_cabin(cabin_start)
+		_launch_shake_strength = 0.014 + 0.018 * (0.5 + 0.5 * sin(_flight_elapsed * 2.1))
+		if steering.length_squared() > 0.0:
+			_flight_status_label.text = "PILOT INPUT  /  GUIDANCE ASSIST STANDBY"
+		elif guidance_assist:
+			_flight_status_label.text = "GUIDANCE RE-LOCK  /  5 KM CORRIDOR"
 		else:
-			astronaut.global_position = astronaut_start.origin + flight_offset
-		_launch_shake_strength = 0.018 + 0.105 * (1.0 - progress)
-		var altitude_step := int(climb_height * progress / 25.0)
-		if progress < 0.92 and altitude_step != last_altitude_step:
-			last_altitude_step = altitude_step
-			_set_message("Powered ascent  /  %03d M" % int(climb_height * acceleration_curve), Color(0.65, 0.91, 1.0))
-	_set_launch_attitude(PI * 0.5 - 0.28, earth_yaw)
+			_flight_status_label.text = "GRAVITY TURN  /  EARTH INTERCEPT"
+		var range_report := int(earth_distance / 250.0)
+		if range_report < last_reported_range:
+			last_reported_range = range_report
+			if range_report % 4 == 0:
+				_commander_message("Earth intercept range %d kilometres. Keep the vehicle clear of asteroid markers." % int(earth_distance / 1000.0))
+		for hazard in _flight_asteroids:
+			var asteroid := hazard.get("node") as Node3D
+			if is_instance_valid(asteroid) and _flight_vehicle_position().distance_to(asteroid.global_position) <= float(hazard.get("collision_radius", 28.0)):
+				await _handle_flight_crash()
+				return
+	if _flight_crashed:
+		return
+	if is_instance_valid(_earth) and _flight_vehicle_position().distance_to(_earth.global_position) > EARTH_BLACKOUT_RANGE:
+		guidance_assist = true
+		_flight_status_label.text = "GUIDANCE RE-LOCK  /  5 KM CORRIDOR"
+		_commander_message("Manual course drift detected. Mission Control is correcting the intercept vector.")
+		var correction_elapsed := 0.0
+		while correction_elapsed < 45.0 and _flight_vehicle_position().distance_to(_earth.global_position) > EARTH_BLACKOUT_RANGE:
+			await get_tree().process_frame
+			var frame_delta := maxf(get_process_delta_time(), 0.001)
+			correction_elapsed += frame_delta
+			var correction_vector := _earth.global_position - _flight_vehicle_position()
+			var correction_direction := correction_vector.normalized()
+			var correction_yaw := atan2(-correction_direction.x, -correction_direction.z)
+			var correction_pitch := atan2(correction_direction.y, Vector2(correction_direction.x, correction_direction.z).length())
+			_flight_yaw = rotate_toward(_flight_yaw, correction_yaw, 1.5 * frame_delta)
+			_flight_pitch = move_toward(_flight_pitch, correction_pitch, 1.5 * frame_delta)
+			_flight_speed = FLIGHT_SPEED
+			_set_launch_attitude(_flight_pitch, _flight_yaw)
+			var correction_heading := Vector3(-sin(_flight_yaw) * cos(_flight_pitch), sin(_flight_pitch), -cos(_flight_yaw) * cos(_flight_pitch)).normalized()
+			ship_root.global_position += correction_heading * _flight_speed * frame_delta
+			_set_astronaut_in_cabin(cabin_start)
+			for hazard in _flight_asteroids:
+				var asteroid := hazard.get("node") as Node3D
+				if is_instance_valid(asteroid) and _flight_vehicle_position().distance_to(asteroid.global_position) <= float(hazard.get("collision_radius", 28.0)):
+					await _handle_flight_crash()
+					return
+	if _flight_crashed:
+		return
 	_launch_shake_strength = 0.0
 	_launch_engines_active = false
 	for flame in _launch_flames:
 		flame.visible = false
 	if is_instance_valid(_launch_engine_light):
 		_launch_engine_light.light_energy = 0.0
-	_commander_message("Main engine cutoff. Orbit reached; the ship is coasting toward Earth.")
-	_set_message("Main engine cutoff. Coasting to Earth.", Color(0.62, 0.88, 1.0))
-	_commander_message("Orbit reached. The return ship is on course for Earth.")
-	_phase_detail.text = "Earth is in sight. Re-entry guidance is active."
-	if is_instance_valid(_earth):
-		var camera: Camera3D = astronaut.get_follow_camera()
-		var forward := -camera.global_transform.basis.z.normalized()
-		var earth_target := camera.global_position + forward * 54.0 + Vector3.UP * 6.0
-		_earth.global_position = camera.global_position + forward * 76.0 + Vector3.UP * 7.0
-		_earth.scale = Vector3.ONE * 0.55
-		var approach := create_tween()
-		approach.set_parallel(true)
-		approach.tween_property(_earth, "scale", Vector3.ONE * 3.1, 3.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		approach.tween_property(_earth, "global_position", earth_target, 3.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		if is_instance_valid(_earth_halo):
-			_earth_halo.omni_range = 82.0
-			_earth_halo.light_energy = 9.0
-			_earth_halo.global_position = _earth.global_position
-			approach.tween_property(_earth_halo, "global_position", earth_target, 3.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	await get_tree().create_timer(3.4).timeout
+	for hazard in _flight_asteroids:
+		var asteroid := hazard.get("node") as Node3D
+		if is_instance_valid(asteroid):
+			asteroid.visible = false
+	_commander_message("Re-entry corridor locked at five kilometres. Earth arrival sequence is beginning.")
+	_phase_detail.text = "Five kilometres out. Earth approach confirmed."
+	_set_message("Earth approach  /  transition corridor locked at 5 km", Color(0.62, 0.88, 1.0))
+	_flight_status_label.text = "EARTH APPROACH  /  BLACKOUT"
+	await _play_earth_arrival_cutscene()
 	_commander_message("Earth landing confirmed. The whole crew is safe.")
 	_set_message("Landing confirmed. Welcome home.", Color(0.72, 0.96, 0.8))
 	mission_phase = 6
 	_award(500, "Safe return to Earth")
 	_update_phase()
 	_complete_panel.visible = true
+	_complete_panel.modulate = Color(1.0, 1.0, 1.0, 0.82)
+	var completion_parent := _complete_panel.get_parent()
+	if completion_parent != _arrival_overlay:
+		completion_parent.remove_child(_complete_panel)
+		_arrival_overlay.add_child(_complete_panel)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
-func _raise_shuttle_for_launch(cabin_start: Transform3D) -> void:
-	if not is_instance_valid(_shuttle_flight_attitude):
-		return
-	var duration := 2.4
-	var elapsed := 0.0
-	while elapsed < duration:
-		await get_tree().process_frame
-		elapsed += maxf(get_process_delta_time(), 0.001)
-		var progress := clampf(elapsed / duration, 0.0, 1.0)
-		var eased := progress * progress * (3.0 - 2.0 * progress)
-		_set_launch_attitude(PI * 0.5 * eased, 0.0)
+func _read_flight_controls() -> Vector2:
+	var yaw_input := float(Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)) - float(Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT))
+	var pitch_input := float(Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)) - float(Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN))
+	return Vector2(yaw_input, pitch_input)
+
+func _liftoff_pitch_arc(elapsed: float) -> float:
+	var pitch_in := smoothstep(1.0, 6.0, elapsed)
+	var pitch_out := 1.0 - smoothstep(12.0, 23.0, elapsed)
+	return 0.28 * pitch_in * pitch_out
+
+func _set_astronaut_in_cabin(cabin_start: Transform3D) -> void:
+	if is_instance_valid(_shuttle_flight_attitude):
 		astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
-	_set_launch_attitude(PI * 0.5, 0.0)
-	astronaut.global_transform = _shuttle_flight_attitude.global_transform * cabin_start
+
+func _flight_vehicle_position() -> Vector3:
+	if is_instance_valid(_shuttle_flight_pivot):
+		return _shuttle_flight_pivot.global_position
+	return ship_root.global_position + ship_position
+
+func _spawn_flight_asteroids(start: Vector3, start_yaw: float, start_pitch: float, start_speed: float) -> void:
+	_flight_asteroids.clear()
+	if not is_instance_valid(_earth):
+		return
+	var simulation_position := start
+	var simulation_yaw := start_yaw
+	var simulation_pitch := start_pitch
+	var simulation_speed := start_speed
+	var simulation_time := 0.0
+	var target_times := [10.0, 18.0, 27.0, 37.0]
+	var side_offsets := [0.0, 15.0, -15.0, 10.0]
+	var asteroid_positions: Array[Vector3] = []
+	var target_index := 0
+	while simulation_time < float(target_times.back()):
+		var step := 0.05
+		var to_earth := _earth.global_position - simulation_position
+		var to_earth_direction := to_earth.normalized()
+		var desired_yaw := atan2(-to_earth_direction.x, -to_earth_direction.z)
+		var desired_pitch := atan2(to_earth_direction.y, Vector2(to_earth_direction.x, to_earth_direction.z).length())
+		simulation_yaw = rotate_toward(simulation_yaw, desired_yaw, 1.25 * step)
+		simulation_pitch = move_toward(simulation_pitch, desired_pitch + _liftoff_pitch_arc(simulation_time), 1.15 * step)
+		simulation_speed = move_toward(simulation_speed, FLIGHT_SPEED, 7.0 * step)
+		var heading := Vector3(-sin(simulation_yaw) * cos(simulation_pitch), sin(simulation_pitch), -cos(simulation_yaw) * cos(simulation_pitch)).normalized()
+		simulation_position += heading * simulation_speed * step
+		simulation_time += step
+		if target_index < target_times.size() and simulation_time >= float(target_times[target_index]):
+			asteroid_positions.append(simulation_position)
+			target_index += 1
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 812045
+	for index in range(asteroid_positions.size()):
+		var radius := rng.randf_range(19.0, 25.0)
+		var position: Vector3 = asteroid_positions[index]
+		var near_earth := (_earth.global_position - position).normalized()
+		var side := near_earth.cross(Vector3.UP)
+		if side.length_squared() < 0.001:
+			side = Vector3.RIGHT
+		side = side.normalized()
+		position += side * float(side_offsets[index])
+		var asteroid := Node3D.new()
+		asteroid.name = "Flight asteroid %02d" % (index + 1)
+		asteroid.global_position = position
+		asteroid.rotation = Vector3(rng.randf_range(-PI, PI), rng.randf_range(-PI, PI), rng.randf_range(-PI, PI))
+		add_child(asteroid)
+		var rock_material := _material(Color(0.26, 0.25, 0.23), 1.0)
+		var core_mesh := SphereMesh.new()
+		core_mesh.radius = radius
+		core_mesh.height = radius * 2.0
+		core_mesh.radial_segments = 9
+		core_mesh.rings = 6
+		var core := MeshInstance3D.new()
+		core.mesh = core_mesh
+		core.material_override = rock_material
+		core.scale = Vector3(1.15, 0.82, 1.0)
+		asteroid.add_child(core)
+		var warning_marker := _label_3d("!", 56, Color(1.0, 0.55, 0.27))
+		warning_marker.position = Vector3(0.0, radius + 18.0, 0.0)
+		asteroid.add_child(warning_marker)
+		for lump_index in range(4):
+			var lump_radius := radius * rng.randf_range(0.22, 0.42)
+			var lump_mesh := SphereMesh.new()
+			lump_mesh.radius = lump_radius
+			lump_mesh.height = lump_radius * 2.0
+			lump_mesh.radial_segments = 7
+			lump_mesh.rings = 5
+			var lump := MeshInstance3D.new()
+			lump.mesh = lump_mesh
+			lump.material_override = rock_material
+			var spread := radius * 0.62
+			lump.position = Vector3(rng.randf_range(-spread, spread), rng.randf_range(-spread, spread), rng.randf_range(-spread, spread))
+			lump.scale = Vector3(rng.randf_range(0.72, 1.25), rng.randf_range(0.72, 1.3), rng.randf_range(0.72, 1.2))
+			asteroid.add_child(lump)
+		_flight_asteroids.append({"node": asteroid, "collision_radius": radius * 1.2 + 12.0})
+
+func _handle_flight_crash() -> void:
+	if _flight_crashed:
+		return
+	_flight_crashed = true
+	_launch_engines_active = false
+	_launch_shake_strength = 0.0
+	for flame in _launch_flames:
+		flame.visible = false
+	if is_instance_valid(_launch_engine_light):
+		_launch_engine_light.light_energy = 0.0
+	if is_instance_valid(_launch_dust):
+		_launch_dust.emitting = false
+	SFX.stop_ship_travel()
+	SFX.stop_ambient()
+	astronaut.set_physics_process(false)
+	_ui.visible = false
+	_flight_ui.visible = false
+	_arrival_video.stop()
+	_arrival_video.visible = false
+	_arrival_fade.color = Color(0.85, 0.2, 0.06, 0.0)
+	var impact_flash := create_tween()
+	impact_flash.tween_property(_arrival_fade, "color", Color(0.85, 0.2, 0.06, 0.9), 0.18)
+	impact_flash.tween_property(_arrival_fade, "color", Color.BLACK, 0.72)
+	await impact_flash.finished
+	_commander_message("Impact confirmed. Return vehicle lost. Mission control recommends a restart.")
+	_crash_panel.visible = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+func _play_earth_arrival_cutscene() -> void:
+	SFX.stop_ambient()
+	_flight_ui.visible = false
+	_ui.visible = false
+	_arrival_fade.color = Color(0.0, 0.0, 0.0, 0.0)
+	var fade_to_black := create_tween()
+	fade_to_black.tween_property(_arrival_fade, "color", Color.BLACK, 1.15).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	await fade_to_black.finished
+	_arrival_video.visible = true
+	_arrival_video.play()
+	SFX.start_ship_travel()
+	var reveal_video := create_tween()
+	reveal_video.tween_property(_arrival_fade, "color", Color(0.0, 0.0, 0.0, 0.0), 1.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	await reveal_video.finished
+	await _arrival_video.finished
+	_arrival_video.paused = true
+	SFX.stop_ship_travel()
 
 func _commander_message(message: String) -> void:
 	if _command_label == null:
@@ -1419,6 +1865,8 @@ func _emissive(color: Color) -> StandardMaterial3D:
 func _label(text: String, size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.text = text
+	if _console_font != null:
+		label.add_theme_font_override("font", _console_font)
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", color)
 	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.6))
@@ -1431,7 +1879,10 @@ func _panel(background: Color, border: Color) -> PanelContainer:
 	style.bg_color = background
 	style.border_color = border
 	style.set_border_width_all(1)
-	style.set_corner_radius_all(4)
+	style.set_corner_radius_all(0)
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.48)
+	style.shadow_size = 4
+	style.shadow_offset = Vector2(0.0, 3.0)
 	style.content_margin_left = 11.0
 	style.content_margin_right = 11.0
 	style.content_margin_top = 9.0

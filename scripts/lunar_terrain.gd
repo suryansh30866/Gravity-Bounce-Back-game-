@@ -3,8 +3,8 @@ class_name LunarTerrain
 
 const CHUNK_SIZE := 96.0
 const STREAM_RADIUS := 2
-const NEAR_GRID_STEPS := 48
-const FAR_GRID_STEPS := 24
+const NEAR_GRID_STEPS := 64
+const FAR_GRID_STEPS := 32
 const CRATER_CELL_SIZE := 58.0
 const MARE_CENTER := Vector2(5.0, -1.0)
 const SKYLIGHT_CENTER := Vector2(43.0, -12.0)
@@ -206,6 +206,7 @@ func _build_chunk(key: Vector2i, center: Vector2i) -> void:
 			var world_x := origin.x + local_x
 			var height := height_at(world_x, world_z)
 			tool.set_uv(Vector2(world_x, world_z) * 0.12)
+			tool.set_uv2(_moon_texture_uv(world_x, world_z, height))
 			tool.set_color(_surface_color(world_x, world_z, height))
 			tool.add_vertex(Vector3(local_x, height, local_z))
 	for z_index in range(grid_steps):
@@ -259,18 +260,36 @@ func _terrain_material() -> ShaderMaterial:
 	shader.code = """
 	shader_type spatial;
 	render_mode diffuse_burley, specular_schlick_ggx;
+uniform sampler2D lunar_color_map : source_color, filter_linear_mipmap, repeat_enable;
 	void fragment() {
-		float fine = sin(UV.x * 17.0 + sin(UV.y * 13.0)) * sin(UV.y * 19.0 + cos(UV.x * 11.0));
-		float grain = sin(UV.x * 83.0 + UV.y * 51.0) * sin(UV.y * 76.0 - UV.x * 37.0);
-		float value = 0.94 + fine * 0.035 + grain * 0.018;
-		ALBEDO = COLOR.rgb * value;
+	vec3 lunar_albedo = texture(lunar_color_map, UV2).rgb;
+	float broad_regolith = sin(UV.x * 7.3 + sin(UV.y * 4.1)) * cos(UV.y * 8.7 - UV.x * 3.6);
+	float fine_regolith = sin(UV.x * 79.0 + sin(UV.y * 61.0)) * cos(UV.y * 73.0 - UV.x * 57.0);
+	vec3 local_tint = mix(vec3(0.78, 0.77, 0.75), COLOR.rgb, 0.28);
+	float albedo_variation = 0.96 + broad_regolith * 0.035 + fine_regolith * 0.025;
+	ALBEDO = lunar_albedo * local_tint * albedo_variation * 0.78;
 		ROUGHNESS = 0.98;
 		METALLIC = 0.0;
 	}
 	"""
 	_surface_shader_material = ShaderMaterial.new()
 	_surface_shader_material.shader = shader
+	_surface_shader_material.set_shader_parameter("lunar_color_map", load("res://assets/planets/moon_cgi_kit_color_2k.jpg"))
 	return _surface_shader_material
+
+func _moon_texture_uv(world_x: float, world_z: float, height: float) -> Vector2:
+	# The playable site is centered on Mare Tranquillitatis (about 8.5° N, 31.4° E).
+	# Map the local terrain plane onto that spot on the LRO global color mosaic.
+	const moon_radius := 1737.4
+	var site_latitude := deg_to_rad(8.5)
+	var site_longitude := deg_to_rad(31.4)
+	var site_direction := Vector3(cos(site_latitude) * cos(site_longitude), sin(site_latitude), cos(site_latitude) * sin(site_longitude))
+	var east_direction := Vector3(-sin(site_longitude), 0.0, cos(site_longitude))
+	var north_direction := Vector3(-sin(site_latitude) * cos(site_longitude), cos(site_latitude), -sin(site_latitude) * sin(site_longitude))
+	var map_direction := (site_direction * (moon_radius + height) + east_direction * world_x + north_direction * world_z).normalized()
+	var longitude := atan2(map_direction.z, map_direction.x)
+	var latitude := asin(clampf(map_direction.y, -1.0, 1.0))
+	return Vector2(longitude / TAU + 0.5, 0.5 - latitude / PI)
 
 func _surface_color(x: float, z: float, height: float) -> Color:
 	var mare_distance := Vector2(x - MARE_CENTER.x, (z - MARE_CENTER.y) * 0.92).length()
