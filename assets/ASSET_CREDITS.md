@@ -7,7 +7,7 @@
 - **License:** Creative Commons Zero (CC0 1.0)
 - **Files:** `audio/sci-fi_sounds/Audio/`
 - **User supplied clip:** `audio/sci-fi_sounds/Spaceship start and travelling sound.mp3`, played for the launch and return flight.
-- The original archive is retained as `audio/sci-fi_sounds.zip`. The `kenney_*.zip` files that were present in the interrupted download were HTML pages returned by the website, not archives, and were removed.
+- The extracted sound files and license notice are included; the source archive is not committed. The `kenney_*.zip` files that were present in the interrupted download were HTML pages returned by the website, not archives, and were removed.
 
 ## Earth and Moon textures
 
